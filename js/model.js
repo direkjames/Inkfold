@@ -92,3 +92,20 @@ export async function projectStats(projectId) {
   const scenes = items.filter(i => i.type === 'scene' && !i.deleted);
   return { words: scenes.reduce((s, i) => s + (i.words || 0), 0), scenes: scenes.length, chapters: items.filter(i => i.type === 'chapter' && !i.deleted).length };
 }
+
+export const STATUSES = [
+  { id: 'idea', name: 'Idea' },
+  { id: 'draft', name: 'Draft' },
+  { id: 'revised', name: 'Revised' },
+  { id: 'final', name: 'Final' },
+];
+export const LABELS = [
+  { id: 'red', name: 'Red', color: '#d0625a' },
+  { id: 'amber', name: 'Amber', color: '#d8913f' },
+  { id: 'gold', name: 'Gold', color: '#c9ad3c' },
+  { id: 'green', name: 'Green', color: '#58a06b' },
+  { id: 'blue', name: 'Blue', color: '#5a88cf' },
+  { id: 'violet', name: 'Violet', color: '#9670c6' },
+];
+export const statusOf = it => STATUSES.find(s => s.id === (it.status || 'draft')) || STATUSES[1];
+export const labelOf = it => LABELS.find(l => l.id === it.label) || null;

@@ -5,8 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
   <title>Inkfold</title>
   <meta name="description" content="A private, offline writing studio for novels, stories and scripts.">
-  <meta name="theme-color" content="#0d1017" media="(prefers-color-scheme: dark)">
-  <meta name="theme-color" content="#eff0ec" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#eff0ec">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -20,7 +19,7 @@
   <link rel="stylesheet" href="styles.css">
   <script>
     // Apply the saved theme before first paint (no flash)
-    try { const t = localStorage.getItem('inkfold-theme'); if (t === 'dark' || t === 'light') document.documentElement.dataset.theme = t; } catch (e) {}
+    try { const t = localStorage.getItem('inkfold-theme'); document.documentElement.dataset.theme = t === 'dark' ? 'dark' : t === 'system' ? (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light') : 'light'; } catch (e) { document.documentElement.dataset.theme = 'light'; }
   </script>
 </head>
 <body>

@@ -2,8 +2,8 @@
 import { db, deviceInfo } from './db.js';
 import { loadLib, LIBS } from './libs.js';
 
-const ITEM_FIELDS = ['projectId', 'type', 'parentId', 'order', 'title', 'content', 'deleted'];
-const PROJECT_FIELDS = ['title', 'subtitle', 'author', 'cover', 'format', 'deleted'];
+const ITEM_FIELDS = ['projectId', 'type', 'parentId', 'order', 'title', 'content', 'deleted', 'status', 'label', 'pov', 'synopsis', 'target'];
+const PROJECT_FIELDS = ['title', 'subtitle', 'author', 'cover', 'format', 'deleted', 'target', 'deadline', 'coverImage'];
 const sig = (r, f) => JSON.stringify(f.map(k => r[k] ?? null));
 
 function hash(str) {
@@ -78,6 +78,11 @@ export function mergeLibraries(local, remote, peerName = 'other device') {
     if (win === R) { out.items.push(R); if (isScene) summary.scenesUpdated++; }
   }
   for (const L of local.items) if (tombs.has(L.id)) out.deleteItems.push(L.id);
+
+  // Writing log: one record per day, project and device, so devices simply union their stats
+  out.log = [];
+  const ll = new Map((local.log || []).map(l => [l.id, l]));
+  for (const R of remote.log || []) { const L = ll.get(R.id); if (!L || (R.words || 0) > (L.words || 0)) out.log.push(R); }
   return { writes: out, summary };
 }
 

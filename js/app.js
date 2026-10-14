@@ -1,142 +1,20 @@
 // Inkfold — app
 import { db, deviceInfo } from './db.js';
-import { COVERS, buildTree, flatScenes, newProjectRecord, newChapter, newScene, seedSample, projectStats, touch } from './model.js';
+import { COVERS, buildTree, flatScenes, newProjectRecord, newChapter, newScene, seedSample, projectStats, touch, STATUSES, LABELS, statusOf, labelOf } from './model.js';
+import * as stats from './stats.js';
+import * as sound from './sound.js';
+import { initBoard, renderBoard, renderOutline, sceneDetails, labelMenu } from './board.js';
 import { sanitizeHtml, htmlWords, htmlToMd, mdToHtml, countWords, blocksToHtml, plainToBlocks } from './text.js';
 import * as io from './io.js';
 import * as sync from './sync.js';
 import { loadLib, LIBS } from './libs.js';
+import { ICONS, icon, MARK, $, $$, esc, num, el, debounce, ago, haptic, toast, errorToast, closePop, popOpen, popover, menu, sheets, sheet, confirmSheet } from './ui.js';
 
-const VERSION = '1.0.0';
+const VERSION = '1.1.0';
 
-// ---------------------------------------------------------------- Icons
-const ICONS = {
-  plus: '<path d="M12 5v14M5 12h14"/>',
-  back: '<path d="M15 18l-6-6 6-6"/>',
-  chev: '<path d="M6 9l6 6 6-6"/>',
-  more: '<circle cx="5" cy="12" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="19" cy="12" r="1.2"/>',
-  grip: '<circle cx="9" cy="6" r="1.1"/><circle cx="15" cy="6" r="1.1"/><circle cx="9" cy="12" r="1.1"/><circle cx="15" cy="12" r="1.1"/><circle cx="9" cy="18" r="1.1"/><circle cx="15" cy="18" r="1.1"/>',
-  sidebar: '<rect x="3" y="4" width="18" height="16" rx="3"/><path d="M9 4v16"/>',
-  focus: '<path d="M4 9V5a1 1 0 011-1h4M15 4h4a1 1 0 011 1v4M20 15v4a1 1 0 01-1 1h-4M9 20H5a1 1 0 01-1-1v-4"/>',
-  type: '<path d="M4 7V5h11v2M9.5 5v14M7 19h5M14 12v-1.5h7V12M17.5 10.5V19M16 19h3"/>',
-  quote: '<path d="M7 7h4v4c0 3-1.5 5-4 6M14 7h4v4c0 3-1.5 5-4 6"/>',
-  sceneBreak: '<path d="M6 12h.01M12 12h.01M18 12h.01" stroke-width="3"/>',
-  list: '<path d="M9 6h11M9 12h11M9 18h11M4.5 6h.01M4.5 12h.01M4.5 18h.01" />',
-  settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/>',
-  sync: '<path d="M4 12a8 8 0 0113.7-5.6L20 8.7M20 4v4.7h-4.7M20 12a8 8 0 01-13.7 5.6L4 15.3M4 20v-4.7h4.7"/>',
-  shield: '<path d="M12 3l7 3v5c0 4.6-3 8.4-7 10-4-1.6-7-5.4-7-10V6z"/><path d="M9 12l2 2 4-4"/>',
-  download: '<path d="M12 4v11M7 10l5 5 5-5M5 20h14"/>',
-  upload: '<path d="M12 20V9M7 14l5-5 5 5M5 4h14"/>',
-  folder: '<path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z"/>',
-  trash: '<path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 002 2h6a2 2 0 002-2l1-12M9 7V4h6v3"/>',
-  restore: '<path d="M3 12a9 9 0 109-9 9.75 9.75 0 00-6.74 2.74L3 8"/><path d="M3 3v5h5"/>',
-  clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
-  check: '<path d="M5 12.5l4.5 4.5L19 7.5"/>',
-  x: '<path d="M6 6l12 12M18 6L6 18"/>',
-  export: '<path d="M14 3h7v7M21 3l-9 9M19 14v5a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h5"/>',
-  file: '<path d="M14 3H6a2 2 0 00-2 2v14a2 2 0 002 2h12a2 2 0 002-2V9z"/><path d="M14 3v6h6"/>',
-  edit: '<path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13.5 6.5l4 4"/>',
-  phone: '<rect x="7" y="2.5" width="10" height="19" rx="2.5"/><path d="M11 18.5h2"/>',
-  wifi: '<path d="M2 8.8a15 15 0 0120 0M5 12.6a10 10 0 0114 0M8.5 16.4a5 5 0 017 0M12 20h.01"/>',
-  qr: '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><path d="M14 14h3v3h-3zM20 14v.01M14 20h.01M17 20h4v-3"/>',
-  camera: '<path d="M4 8h3l2-3h6l2 3h3a1 1 0 011 1v10a1 1 0 01-1 1H4a1 1 0 01-1-1V9a1 1 0 011-1z"/><circle cx="12" cy="13.5" r="3.5"/>',
-  copy: '<rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 012-2h9"/>',
-  install: '<path d="M12 3v12M7 10l5 5 5-5"/><rect x="3" y="17" width="18" height="4" rx="1.5"/>',
-  book: '<path d="M4 5a2 2 0 012-2h13v16H6a2 2 0 00-2 2z"/><path d="M4 19V5M8 7h7"/>',
-  layers: '<path d="M12 3l9 5-9 5-9-5z"/><path d="M3 13l9 5 9-5"/>',
-  info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/>',
-  share: '<path d="M4 12v7a2 2 0 002 2h12a2 2 0 002-2v-7M16 6l-4-4-4 4M12 2v13"/>',
-  heading: '<path d="M6 4v16M18 4v16M6 12h12"/>',
-};
-const icon = (n, cls = 'i') => `<svg class="${cls}" viewBox="0 0 24 24" aria-hidden="true">${ICONS[n] || ''}</svg>`;
-const MARK = `<svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true"><path d="M7 4.5h12.5L25 10v17.5H7z" fill="var(--text)"/><path d="M19.5 4.5V10H25z" fill="var(--accent)"/><path d="M16 12.6s-3.9 4.3-3.9 6.8a3.9 3.9 0 0 0 7.8 0c0-2.5-3.9-6.8-3.9-6.8z" fill="var(--bg)"/></svg>`;
-
-// ---------------------------------------------------------------- Utilities
-const $ = (s, el = document) => el.querySelector(s);
-const $$ = (s, el = document) => Array.from(el.querySelectorAll(s));
-const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const num = n => (n || 0).toLocaleString();
-const el = html => { const t = document.createElement('template'); t.innerHTML = html.trim(); return t.content.firstElementChild; };
-const debounce = (fn, ms) => { let t; const d = (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; d.flush = (...a) => { clearTimeout(t); return fn(...a); }; return d; };
-function ago(ts) {
-  if (!ts) return 'never';
-  const s = (Date.now() - ts) / 1000;
-  if (s < 45) return 'just now';
-  if (s < 3600) return `${Math.round(s / 60)} min ago`;
-  if (s < 86400) return `${Math.round(s / 3600)} h ago`;
-  const d = Math.round(s / 86400);
-  if (d === 1) return 'yesterday';
-  if (d < 30) return `${d} days ago`;
-  return new Date(ts).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
-}
-const haptic = (ms = 8) => { try { navigator.vibrate && navigator.vibrate(ms); } catch {} };
-
-function toast(msg, action, ms = 3600) {
-  const t = el(`<div class="toast"><span>${esc(msg)}</span>${action ? `<button>${esc(action.label)}</button>` : ''}</div>`);
-  const remove = () => { t.classList.add('leaving'); setTimeout(() => t.remove(), 300); };
-  if (action) $('button', t).onclick = () => { action.run(); remove(); };
-  $('#toasts').appendChild(t);
-  if (ms) setTimeout(remove, ms);
-  return remove;
-}
-const errorToast = e => { console.error(e); toast(e && e.message ? e.message : 'Something went wrong. Please try again.'); };
-
-// Popovers
-let openPop = null;
-function closePop() { if (openPop) { openPop.remove(); openPop = null; } }
-function popover(anchor, content, { align = 'end', cls = '' } = {}) {
-  closePop();
-  const p = el(`<div class="pop ${cls}" role="menu"></div>`);
-  if (typeof content === 'string') p.innerHTML = content; else p.appendChild(content);
-  document.body.appendChild(p);
-  const r = anchor.getBoundingClientRect();
-  const pw = p.offsetWidth, ph = p.offsetHeight;
-  let left = align === 'end' ? r.right - pw : r.left;
-  left = Math.max(12, Math.min(left, innerWidth - pw - 12));
-  let top = r.bottom + 6;
-  if (top + ph > innerHeight - 12) top = Math.max(12, r.top - ph - 6);
-  p.style.left = left + 'px'; p.style.top = top + 'px';
-  openPop = p;
-  setTimeout(() => {
-    const off = e => { if (!p.contains(e.target)) { closePop(); document.removeEventListener('pointerdown', off, true); } };
-    document.addEventListener('pointerdown', off, true);
-  });
-  return p;
-}
-function menu(anchor, items) {
-  const html = items.map(it => it === '-' ? '<hr>' : `<button class="mi ${it.danger ? 'danger' : ''}" data-k="${it.k}">${icon(it.icon)}<span>${esc(it.label)}</span></button>`).join('');
-  const p = popover(anchor, html);
-  $$('.mi', p).forEach(b => b.onclick = () => { closePop(); items.find(i => i.k === b.dataset.k).run(); });
-}
-
-// Sheets
-const sheets = [];
-function sheet({ title, sub = '', body = '', foot = '', wide = false, onClose }) {
-  const wrap = el(`<div class="sheet-wrap"><div class="sheet ${wide ? 'wide' : ''}" role="dialog" aria-modal="true" aria-label="${esc(title)}">
-    <div class="sheet-head"><div><h3>${esc(title)}</h3>${sub ? `<p>${sub}</p>` : ''}</div><button class="icon-btn" data-close aria-label="Close">${icon('x')}</button></div>
-    <div class="sheet-body"></div>${foot !== null ? '<div class="sheet-foot"></div>' : ''}</div></div>`);
-  const s = { wrap, body: $('.sheet-body', wrap), foot: $('.sheet-foot', wrap) };
-  if (typeof body === 'string') s.body.innerHTML = body; else s.body.appendChild(body);
-  if (s.foot) { if (foot) s.foot.innerHTML = foot; else s.foot.remove(); }
-  s.close = () => { wrap.remove(); const i = sheets.indexOf(s); if (i >= 0) sheets.splice(i, 1); onClose && onClose(); };
-  wrap.addEventListener('pointerdown', e => { if (e.target === wrap) s.close(); });
-  $('[data-close]', wrap).onclick = s.close;
-  document.body.appendChild(wrap);
-  sheets.push(s);
-  setTimeout(() => { const f = $('[autofocus]', wrap); if (f) f.focus(); }, 60);
-  return s;
-}
-function confirmSheet({ title, sub, confirm = 'Confirm', danger = false }) {
-  return new Promise(res => {
-    let done = false;
-    const s = sheet({ title, sub, body: '', foot: `<button class="btn btn-ghost" data-no>Cancel</button><button class="btn ${danger ? 'btn-danger' : 'btn-primary'}" data-yes>${esc(confirm)}</button>`, onClose: () => { if (!done) res(false); } });
-    s.body.remove();
-    $('[data-no]', s.wrap).onclick = () => s.close();
-    $('[data-yes]', s.wrap).onclick = () => { done = true; s.close(); res(true); };
-  });
-}
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape') {
-    if (openPop) return closePop();
+    if (popOpen()) return closePop();
     if (sheets.length) return sheets[sheets.length - 1].close();
     if (document.body.classList.contains('focus')) setFocusMode(false);
     else if (document.body.classList.contains('binder-open')) document.body.classList.remove('binder-open');
@@ -151,7 +29,7 @@ const FONTS = {
   hanken: { name: 'Hanken', css: "'Hanken Grotesk', system-ui, sans-serif", note: 'Clean sans' },
   plex: { name: 'Plex Mono', css: "'IBM Plex Mono', ui-monospace, monospace", note: 'Typewriter' },
 };
-const DEFAULTS = { theme: 'system', font: 'newsreader', size: 19, lh: 1.7, width: 680, typewriter: true, smart: true, indent: false };
+const DEFAULTS = { theme: 'light', font: 'newsreader', size: 19, lh: 1.7, width: 680, typewriter: true, smart: true, indent: false, dim: 'off', dailyGoal: 500, volume: 0.5 };
 let settings = { ...DEFAULTS };
 
 function applySettings() {
@@ -163,11 +41,29 @@ function applySettings() {
   r.style.setProperty('--ed-lh', settings.lh);
   r.style.setProperty('--measure', settings.width + 'px');
   const ed = $('#editor'); if (ed) ed.classList.toggle('indent', !!settings.indent);
+  const dark = isDark();
+  $$('[data-act="theme"]').forEach(b => { b.innerHTML = icon(dark ? 'sun' : 'moon'); b.title = dark ? 'Switch to Paper (light)' : 'Switch to Ink (dark)'; b.setAttribute('aria-label', b.title); });
+  $$('meta[name="theme-color"]').forEach(m => m.setAttribute('content', dark ? '#0d1017' : '#eff0ec'));
+  applyDim();
 }
+const isDark = () => settings.theme === 'dark' || (settings.theme === 'system' && matchMedia('(prefers-color-scheme: dark)').matches);
+function toggleTheme() {
+  document.documentElement.classList.add('theme-fade');
+  settings.theme = isDark() ? 'light' : 'dark';
+  saveSettings(); haptic(6);
+  setTimeout(() => document.documentElement.classList.remove('theme-fade'), 500);
+}
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => applySettings());
 async function saveSettings() { await db.setMeta('settings', settings); applySettings(); }
 
+// Progress ring (0..1+), drawn as SVG
+function ring(p, size = 28, stroke = 3) {
+  const r = (size - stroke) / 2, c = 2 * Math.PI * r, v = Math.max(0, Math.min(1, p || 0));
+  return `<svg class="ring ${v >= 1 ? 'done' : ''}" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" aria-hidden="true"><circle cx="${size / 2}" cy="${size / 2}" r="${r}" fill="none" stroke-width="${stroke}" class="ring-bg"/><circle cx="${size / 2}" cy="${size / 2}" r="${r}" fill="none" stroke-width="${stroke}" class="ring-fg" stroke-linecap="round" stroke-dasharray="${c}" stroke-dashoffset="${c * (1 - v)}" transform="rotate(-90 ${size / 2} ${size / 2})"/>${v >= 1 ? `<path d="M${size * .34} ${size * .52}l${size * .11} ${size * .11} ${size * .2}-${size * .22}" fill="none" stroke-width="${stroke * .8}" stroke-linecap="round" stroke-linejoin="round" class="ring-check"/>` : ''}</svg>`;
+}
+
 // ---------------------------------------------------------------- State
-const state = { projects: [], project: null, items: [], scene: null, dirty: false, installEvt: null, device: null };
+const state = { projects: [], project: null, items: [], scene: null, dirty: false, installEvt: null, device: null, view: 'write', sprint: null, today: 0 };
 
 // ---------------------------------------------------------------- Library
 async function renderLibrary() {
@@ -176,8 +72,9 @@ async function renderLibrary() {
   const projects = (await db.all('projects')).filter(p => !p.deleted)
     .sort((a, b) => (b.lastEdited || b.updatedAt) - (a.lastEdited || a.updatedAt));
   state.projects = projects;
-  const stats = await Promise.all(projects.map(p => projectStats(p.id)));
-  const total = stats.reduce((s, x) => s + x.words, 0);
+  const pstats = await Promise.all(projects.map(p => projectStats(p.id)));
+  const total = pstats.reduce((s, x) => s + x.words, 0);
+  const sum = await stats.summary(settings.dailyGoal);
   const lastBackup = await db.meta('lastBackup');
   const backupAge = lastBackup ? Date.now() - lastBackup.at : Infinity;
   const fresh = backupAge < 3 * 864e5;
@@ -200,7 +97,9 @@ async function renderLibrary() {
       <div class="lib-actions">
         ${canInstall ? `<button class="chip hide-narrow" data-act="install">${icon('install')}Install app</button>` : ''}
         <button class="chip" data-act="backup-status" title="Backups"><span class="dot ${fresh ? '' : 'warn'}"></span><span class="hide-narrow">${lastBackup ? 'Backed up ' + ago(lastBackup.at) : 'Not backed up'}</span></button>
+        <button class="icon-btn" data-act="stats" title="Goals & stats" aria-label="Goals and stats">${icon('chart')}</button>
         <button class="icon-btn" data-act="sync" title="Nearby Sync" aria-label="Nearby Sync">${icon('sync')}</button>
+        <button class="icon-btn" data-act="theme"></button>
         <button class="icon-btn" data-act="settings" title="Settings" aria-label="Settings">${icon('settings')}</button>
       </div>
     </header>
@@ -208,7 +107,12 @@ async function renderLibrary() {
       <div>
         <div class="eyebrow">Your library</div>
         <h1>${projects.length ? 'Pick up <em>where you left off.</em>' : 'Every book starts <em>on a blank page.</em>'}</h1>
-        <div class="sum tnum">${projects.length} project${projects.length === 1 ? '' : 's'} · ${num(total)} words written</div>
+        <div class="sum tnum">${projects.length} project${projects.length === 1 ? '' : 's'} · ${num(total)} words in your manuscripts</div>
+        <button class="today-row" data-act="stats">
+          ${ring(sum.today / settings.dailyGoal, 30)}
+          <span class="tnum"><b>${num(sum.today)}</b> of ${num(settings.dailyGoal)} words today</span>
+          ${sum.streak ? `<span class="streak tnum">${icon('flame')}${sum.streak}-day streak</span>` : ''}
+        </button>
       </div>
       <div class="lib-hero-actions">
         <button class="btn btn-quiet" data-act="import">${icon('upload')}Import</button>
@@ -217,12 +121,13 @@ async function renderLibrary() {
     </section>
     ${banner}
     <section class="shelf">
-      ${projects.map((p, i) => coverHtml(p, stats[i])).join('')}
+      ${projects.map((p, i) => coverHtml(p, pstats[i])).join('')}
       <button class="book" data-act="new" aria-label="New project"><div class="cover new"><div class="plus">${icon('plus')}</div><b>New project</b></div><div class="b-meta"><span>&nbsp;</span></div></button>
     </section>
     <footer class="lib-foot"><span>${icon('shield')}Private and offline. Your writing never leaves this device unless you sync or export it.</span><span>Inkfold ${VERSION}</span></footer>
   </div>`;
 
+  applySettings();
   lib.onclick = async e => {
     const b = e.target.closest('[data-act], [data-open]');
     if (!b) return;
@@ -235,6 +140,8 @@ async function renderLibrary() {
     else if (a === 'install') installApp();
     else if (a === 'backup') doBackup();
     else if (a === 'backup-status') settingsSheet('data');
+    else if (a === 'stats') statsSheet();
+    else if (a === 'theme') toggleTheme();
     else if (a === 'folder-grant') {
       try { const { dir } = await io.folderPermission(); if ((await dir.requestPermission({ mode: 'readwrite' })) === 'granted') { await io.writeFolderBackup(dir); toast('Backed up to your folder'); renderLibrary(); } }
       catch (err) { errorToast(err); }
@@ -245,12 +152,12 @@ async function renderLibrary() {
 function coverHtml(p, st) {
   const c = COVERS[p.cover % COVERS.length] || COVERS[0];
   return `<button class="book" data-open="${p.id}" aria-label="Open ${esc(p.title)}">
-    <div class="cover" style="--cbg:${c.bg};--cfg:${c.fg};--cline:${c.line}">
+    ${p.coverImage ? `<div class="cover has-img" style="--cbg:${c.bg};background-image:url('${p.coverImage}')"></div>` : `<div class="cover" style="--cbg:${c.bg};--cfg:${c.fg};--cline:${c.line}">
       <div class="frame"></div>
       <div class="c-kicker">${p.sample ? 'Sample' : `${st.chapters} chapter${st.chapters === 1 ? '' : 's'}`}</div>
       <div><div class="c-title">${esc(p.title)}</div>${p.subtitle && !p.sample ? `<div class="c-sub">${esc(p.subtitle)}</div>` : ''}</div>
       <div class="c-foot"><span>${esc(p.author || '')}</span><svg class="c-fold" viewBox="0 0 16 16"><path d="M3 2h7l3 3v9H3z" fill="none" stroke="currentColor" stroke-width="1"/><path d="M10 2v3h3" fill="none" stroke="currentColor" stroke-width="1"/></svg></div>
-    </div>
+    </div>`}
     <div class="b-meta"><b>${esc(p.title)}${p.sample ? '<span class="tag-sample">Sample</span>' : ''}</b><span class="tnum">${num(st.words)} words · ${ago(p.lastEdited || p.updatedAt)}</span></div>
   </button>`;
 }
@@ -302,6 +209,7 @@ async function openProject(id, sceneId) {
   const ws = $('#workspace'); ws.hidden = false;
   renderWorkspace();
   await loadScene(scene.id);
+  await setView(await db.meta('view:' + id, 'write'), { save: false });
 }
 
 function renderWorkspace() {
@@ -309,11 +217,13 @@ function renderWorkspace() {
   ws.innerHTML = `
     <aside class="binder" aria-label="Binder">
       <div class="binder-head">
-        <button class="back" data-act="library">${icon('back')}Library</button>
+        <div class="bh-top"><button class="back" data-act="library">${icon('back')}Library</button><button class="icon-btn" data-act="theme"></button></div>
         <div class="proj-title"><div style="min-width:0"><h2 id="projTitle"></h2><p id="projMeta" class="tnum"></p></div><button class="icon-btn" data-act="project-menu" aria-label="Project options">${icon('more')}</button></div>
       </div>
       <div class="binder-list" id="binderList"></div>
       <div class="binder-foot">
+        <button class="goal-strip" data-act="stats" id="goalStrip"></button>
+        <div id="targetStrip"></div>
         <div class="totals tnum"><span>Manuscript</span><span><b id="projWords">0</b> words</span></div>
         <button class="btn btn-quiet btn-sm" data-act="add-chapter">${icon('plus')}New chapter</button>
       </div>
@@ -323,6 +233,11 @@ function renderWorkspace() {
       <header class="topbar">
         <button class="icon-btn only-narrow" data-act="drawer" aria-label="Open binder">${icon('sidebar')}</button>
         <div class="crumbs"><span class="c1" id="crumbChapter"></span><span class="sep">/</span><span class="c2" id="crumbScene"></span></div>
+        <div class="seg view-seg" id="viewSeg" role="tablist" aria-label="View">
+          <button data-view="write" role="tab" title="Write">${icon('pen')}<span>Write</span></button>
+          <button data-view="board" role="tab" title="Corkboard">${icon('board')}<span>Board</span></button>
+          <button data-view="outline" role="tab" title="Outline">${icon('outline')}<span>Outline</span></button>
+        </div>
         <div class="fmt" id="fmtBar" role="toolbar" aria-label="Formatting">
           <button class="icon-btn" data-fmt="bold" title="Bold (Ctrl+B)" aria-label="Bold"><b>B</b></button>
           <button class="icon-btn" data-fmt="italic" title="Italic (Ctrl+I)" aria-label="Italic"><i>I</i></button>
@@ -331,9 +246,12 @@ function renderWorkspace() {
           <button class="icon-btn" data-fmt="list" title="List (- then space)" aria-label="List">${icon('list')}</button>
           <button class="icon-btn" data-fmt="break" title="Scene break (*** then Enter)" aria-label="Scene break"><span class="ast">⁂</span></button>
         </div>
+        <button class="icon-btn hide-narrow" data-act="sound" title="Soundscapes" aria-label="Soundscapes">${icon('headphones')}</button>
+        <button class="icon-btn" data-act="sprint" title="Writing sprint" aria-label="Writing sprint">${icon('timer')}</button>
         <button class="icon-btn" data-act="type" title="Typography" aria-label="Typography">${icon('type')}</button>
-        <button class="icon-btn" data-act="focus" title="Focus mode (Ctrl+.)" aria-label="Focus mode">${icon('focus')}</button>
-        <button class="icon-btn" data-act="export" title="Export" aria-label="Export">${icon('export')}</button>
+        <button class="icon-btn hide-narrow" data-act="focus" title="Focus mode (Ctrl+.)" aria-label="Focus mode">${icon('focus')}</button>
+        <button class="icon-btn hide-narrow" data-act="export" title="Export" aria-label="Export">${icon('export')}</button>
+        <button class="icon-btn only-narrow" data-act="more-narrow" aria-label="More">${icon('more')}</button>
       </header>
       <div class="scroller" id="scroller">
         <article class="page">
@@ -343,16 +261,64 @@ function renderWorkspace() {
           <textarea class="md-editor" id="mdEditor" spellcheck="true" hidden aria-label="Scene text (Markdown)" placeholder="Begin here… (Markdown)"></textarea>
         </article>
       </div>
-      <div class="statusbar tnum" id="statusbar"><span><b id="sceneWords">0</b> words</span><span class="proj-total"><span id="projWords2">0</span> in project</span><span class="saved" id="saveState"><span class="dot"></span>Saved</span></div>
+      <div class="view-scroll" id="boardView" hidden></div>
+      <div class="view-scroll" id="outlineView" hidden></div>
+      <div class="statusbar tnum" id="statusbar">
+        <button class="sprint-pill" id="sprintPill" data-act="sprint" hidden></button>
+        <span class="sb-words"><b id="sceneWords">0</b><span id="sceneTarget"></span> words</span><span class="proj-total"><span id="projWords2">0</span> in project</span><span class="saved" id="saveState"><span class="dot"></span>Saved</span>
+      </div>
     </section>`;
   ws.onclick = onWorkspaceClick;
   // keep the text selection when tapping formatting buttons
   $('#fmtBar').addEventListener('pointerdown', e => e.preventDefault());
   $('#fmtBar').addEventListener('mousedown', e => e.preventDefault());
+  $$('#viewSeg button').forEach(b => b.onclick = () => setView(b.dataset.view));
   document.execCommand('defaultParagraphSeparator', false, 'p');
   bindEditor();
   renderBinder();
   applySettings();
+  renderGoalStrip();
+  renderSprintPill();
+}
+
+async function setView(v, { save = true } = {}) {
+  await saveNow();
+  state.view = v;
+  if (save) db.setMeta('view:' + state.project.id, v);
+  document.body.dataset.view = v;
+  $$('#viewSeg button').forEach(b => { b.classList.toggle('on', b.dataset.view === v); b.setAttribute('aria-selected', b.dataset.view === v); });
+  $('#scroller').hidden = v !== 'write';
+  $('#boardView').hidden = v !== 'board';
+  $('#outlineView').hidden = v !== 'outline';
+  if (v === 'board') renderBoard($('#boardView'));
+  if (v === 'outline') renderOutline($('#outlineView'));
+  if (v !== 'write' && document.body.classList.contains('focus')) setFocusMode(false);
+}
+function renderCurrentView() {
+  if (state.view === 'board') renderBoard($('#boardView'));
+  else if (state.view === 'outline') renderOutline($('#outlineView'));
+}
+
+async function saveItem(it) {
+  touch(it);
+  if (state.scene && it.id === state.scene.id) {
+    $('#sceneTitle').value = it.title;
+  }
+  await db.put('items', it);
+}
+
+async function renderGoalStrip() {
+  const strip = $('#goalStrip'); if (!strip) return;
+  const sum = await stats.summary(settings.dailyGoal);
+  state.today = sum.today;
+  strip.innerHTML = `${ring(sum.today / settings.dailyGoal, 34, 3.2)}<span class="gs-text"><b class="tnum">${num(sum.today)} <small>/ ${num(settings.dailyGoal)}</small></b><span>${sum.today >= settings.dailyGoal ? 'Goal reached today' : 'words today'}${sum.streak ? ` · ${sum.streak}-day streak` : ''}</span></span>`;
+  const p = state.project, ts = $('#targetStrip');
+  if (p && p.target && ts) {
+    const words = state.items.filter(i => i.type === 'scene' && !i.deleted).reduce((s, i) => s + (i.words || 0), 0);
+    const pl = stats.plan(p, words, sum.byProjectDay);
+    const when = pl.daysLeft === undefined ? '' : pl.remaining === 0 ? 'Target reached' : pl.daysLeft > 0 ? `${num(pl.perDay)} words a day · ${pl.daysLeft} day${pl.daysLeft === 1 ? '' : 's'} left` : 'Deadline passed';
+    ts.innerHTML = `<div class="target-strip"><div class="ts-row tnum"><span>Target</span><span>${Math.round(pl.pct * 100)}% of ${num(p.target)}</span></div><div class="bar"><i style="width:${pl.pct * 100}%"></i></div>${when ? `<div class="ts-when tnum">${when}</div>` : ''}</div>`;
+  } else if (ts) ts.innerHTML = '';
 }
 
 function renderProjectHead() {
@@ -378,7 +344,8 @@ function renderBinder() {
       <div class="scenes">
         ${c.scenes.map(s => `<div class="row scene-row ${s.id === state.scene?.id ? 'active' : ''} ${s.conflictOf ? 'conflict' : ''}" data-id="${s.id}" data-type="scene">
           <span class="grip" data-grip aria-label="Drag to reorder">${icon('grip')}</span>
-          <span class="r-title">${esc(s.title || 'Untitled scene')}</span>
+          <i class="st-dot st-${statusOf(s).id}" title="${statusOf(s).name}"></i>
+          <span class="r-title">${esc(s.title || 'Untitled scene')}</span>${labelOf(s) ? `<i class="lbl-dot" style="--lbl:${labelOf(s).color}" title="${labelOf(s).name} label"></i>` : ''}
           <span class="r-count">${num(s.words)}</span>
           <button class="r-more" data-more="${s.id}" aria-label="Scene options">${icon('more')}</button>
         </div>`).join('')}
@@ -396,6 +363,18 @@ async function onWorkspaceClick(e) {
   if (fmt) return applyFormat(fmt);
   if (act === 'library') { await saveNow(); $('#workspace').hidden = true; $('#library').hidden = false; document.body.classList.remove('binder-open'); setFocusMode(false); state.project = null; return renderLibrary(); }
   if (act === 'drawer') return document.body.classList.add('binder-open');
+  if (act === 'theme') return toggleTheme();
+  if (act === 'stats') return statsSheet();
+  if (act === 'sound') return soundPanel(t.closest('[data-act]'));
+  if (act === 'sprint') return state.sprint ? sprintMenu(t.closest('[data-act]')) : sprintPanel(t.closest('[data-act]'));
+  if (act === 'scene-status') return statusMenu(t.closest('[data-act]'));
+  if (act === 'scene-details') return sceneDetails(state.scene.id);
+  if (act === 'more-narrow') return menu(t.closest('[data-act]'), [
+    { k: 'focus', icon: 'focus', label: 'Focus mode', run: () => setFocusMode(true) },
+    { k: 'sound', icon: 'headphones', label: 'Soundscapes', run: () => soundPanel(t.closest('[data-act]')) },
+    { k: 'stats', icon: 'chart', label: 'Goals & stats', run: statsSheet },
+    { k: 'export', icon: 'export', label: 'Export', run: exportSheet },
+  ]);
   if (act === 'close-drawer') return document.body.classList.remove('binder-open');
   if (act === 'add-chapter') return addChapter();
   if (act === 'focus') return setFocusMode(!document.body.classList.contains('focus'));
@@ -419,7 +398,7 @@ async function onWorkspaceClick(e) {
       const ch = row.closest('.chapter'); ch.classList.toggle('closed');
       const closed = $$('.chapter.closed').map(x => x.dataset.chapter);
       sessionStorage.setItem('closed:' + state.project.id, JSON.stringify(closed));
-    } else { await loadScene(row.dataset.id); document.body.classList.remove('binder-open'); }
+    } else { if (state.view !== 'write') await setView('write'); await loadScene(row.dataset.id); document.body.classList.remove('binder-open'); }
   }
 }
 document.addEventListener('dblclick', e => { const r = e.target.closest('#binderList .row'); if (r && r.dataset.id !== '__loose') renameInline(r.dataset.id); });
@@ -429,7 +408,7 @@ function itemMenu(anchor, id) {
   if (!it) return;
   const items = [{ k: 'rename', icon: 'edit', label: 'Rename', run: () => renameInline(id) }];
   if (it.type === 'chapter') items.push({ k: 'add', icon: 'plus', label: 'New scene in chapter', run: () => addScene(id) });
-  if (it.type === 'scene') items.push({ k: 'dup', icon: 'copy', label: 'Duplicate', run: () => duplicateScene(id) });
+  if (it.type === 'scene') items.push({ k: 'details', icon: 'edit', label: 'Scene details', run: () => sceneDetails(id) }, { k: 'dup', icon: 'copy', label: 'Duplicate', run: () => duplicateScene(id) });
   items.push('-', { k: 'del', icon: 'trash', label: 'Move to Trash', danger: true, run: () => trashItem(id) });
   menu(anchor, items);
 }
@@ -457,19 +436,22 @@ function renameInline(id) {
 
 const sortedSiblings = (type, parentId) => state.items.filter(i => !i.deleted && i.type === type && (type === 'chapter' || i.parentId === parentId)).sort((a, b) => a.order - b.order);
 
-async function addChapter() {
+async function addChapter({ stay = false } = {}) {
   const sibs = sortedSiblings('chapter');
   const ch = newChapter(state.project.id, (sibs.at(-1)?.order || 0) + 1, `Chapter ${sibs.length + 1}`);
   const sc = newScene(state.project.id, ch.id, 1, 'Scene 1');
   await db.writeBatch({ items: [ch, sc] });
   state.items.push(ch, sc); haptic();
+  if (stay && state.view !== 'write') { renderBinder(); renderCurrentView(); return; }
   await loadScene(sc.id);
   renameInline(ch.id);
 }
-async function addScene(chapterId) {
+async function addScene(chapterId, { stay = false } = {}) {
   const sibs = sortedSiblings('scene', chapterId);
   const sc = newScene(state.project.id, chapterId, (sibs.at(-1)?.order || 0) + 1, `Scene ${sibs.length + 1}`);
   await db.put('items', sc); state.items.push(sc); haptic();
+  if (stay && state.view !== 'write') { renderBinder(); renderCurrentView(); sceneDetails(sc.id); return; }
+  if (state.view !== 'write') await setView('write');
   await loadScene(sc.id);
   $('#sceneTitle').focus(); $('#sceneTitle').select();
 }
@@ -590,7 +572,9 @@ function updateCrumbs() {
   const si = ch ? ch.scenes.findIndex(s => s.id === state.scene.id) : 0;
   $('#crumbChapter').textContent = ch ? ch.title : '';
   $('#crumbScene').textContent = state.scene.title || 'Untitled scene';
-  $('#sceneKicker').innerHTML = ch ? `<span>Chapter ${ci + 1}</span><span class="k-dot"></span><span>Scene ${si + 1}</span>${state.scene.conflictOf ? '<span class="k-dot"></span><span style="color:var(--warn)">Conflicted copy</span>' : ''}` : '';
+  const st = statusOf(state.scene), lb = labelOf(state.scene);
+  $('#sceneKicker').innerHTML = (ch ? `<span>Chapter ${ci + 1}</span><span class="k-dot"></span><span>Scene ${si + 1}</span>${state.scene.conflictOf ? '<span class="k-dot"></span><span style="color:var(--warn)">Conflicted copy</span>' : ''}` : '')
+    + `<span class="k-spacer"></span><button class="pill st-${st.id} k-pill" data-act="scene-status" title="Change status">${st.name}</button>${lb ? `<i class="lbl-dot" style="--lbl:${lb.color}"></i>` : ''}${state.scene.pov ? `<span class="k-pov">${esc(state.scene.pov)}</span>` : ''}<button class="k-more" data-act="scene-details" title="Scene details" aria-label="Scene details">${icon('more')}</button>`;
 }
 
 function currentHtml() { return isMd() ? mdToHtml($('#mdEditor').value) : sanitizeHtml($('#editor').innerHTML); }
@@ -600,6 +584,9 @@ function updateCounts() {
   const w = state.scene ? liveWords() : 0;
   const others = state.items.filter(i => i.type === 'scene' && !i.deleted && i.id !== state.scene?.id).reduce((s, i) => s + (i.words || 0), 0);
   $('#sceneWords').textContent = num(w);
+  const tg = state.scene && state.scene.target;
+  $('#sceneTarget').textContent = tg ? ` / ${num(tg)}` : '';
+  if (state.sprint && state.sprint.phase === 'write') renderSprintPill();
   $('#projWords').textContent = num(others + w);
   $('#projWords2').textContent = num(others + w);
 }
@@ -615,8 +602,11 @@ async function saveNow() {
   const sc = state.scene;
   sc.content = currentHtml();
   sc.title = $('#sceneTitle').value.trim() || 'Untitled scene';
+  const before = sc.words || 0;
   sc.words = htmlWords(sc.content);
   touch(sc);
+  const delta = sc.words - before;
+  if (delta > 0) afterWordsAdded(delta, before, sc);
   state.project.lastEdited = Date.now();
   await db.writeBatch({ items: [sc], projects: [state.project] });
   setSaveState(true);
@@ -626,6 +616,26 @@ async function saveNow() {
 const saveSoon = debounce(saveNow, 450);
 const countSoon = debounce(updateCounts, 180);
 function changed() { state.dirty = true; setSaveState(false); saveSoon(); countSoon(); }
+
+// ---------- Goals, celebrations ----------
+async function afterWordsAdded(delta, before, sc) {
+  const goal = settings.dailyGoal;
+  const prevToday = state.today;
+  await stats.logWords(state.project.id, delta);
+  state.today = prevToday + delta;
+  if (state.sprint && state.sprint.phase === 'write') { state.sprint.words += delta; renderSprintPill(); }
+  if (prevToday < goal && state.today >= goal) celebrate('Daily goal reached', `${num(goal)} words today. Lovely work.`);
+  else if (sc.target && before < sc.target && sc.words >= sc.target) celebrate('Scene target reached', `“${sc.title}” hit ${num(sc.target)} words.`, true);
+  renderGoalStrip();
+}
+
+function celebrate(title, sub, small = false) {
+  haptic([12, 60, 18]);
+  const c = el(`<div class="celebrate ${small ? 'small' : ''}" role="status"><div class="cb-burst"><i></i><i></i><i></i><svg viewBox="0 0 24 24" class="cb-check"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></div><div class="cb-text"><b>${esc(title)}</b><span>${esc(sub)}</span></div></div>`);
+  document.body.appendChild(c);
+  setTimeout(() => c.classList.add('out'), small ? 2200 : 3200);
+  setTimeout(() => c.remove(), small ? 2800 : 3800);
+}
 
 function autoGrow(t) { t.style.height = 'auto'; t.style.height = t.scrollHeight + 'px'; }
 
@@ -793,6 +803,7 @@ function typographyPanel(anchor) {
       <label class="slider-row"><span>Spacing</span><input type="range" id="t-lh" min="1.3" max="2.2" step="0.05" value="${settings.lh}"><output>${settings.lh.toFixed(2)}</output></label>
       <label class="slider-row"><span>Width</span><input type="range" id="t-width" min="480" max="900" step="20" value="${settings.width}"><output>${settings.width}</output></label>
     </div>
+    <div><h4>Focus dimming</h4><div class="seg" id="t-dim">${[['off', 'Off'], ['paragraph', 'Paragraph'], ['sentence', 'Sentence']].map(([k, l]) => `<button data-v="${k}" class="${settings.dim === k ? 'on' : ''}">${l}</button>`).join('')}</div></div>
     <div style="display:flex;flex-direction:column;gap:6px">
       ${toggleRow('typewriter', 'Typewriter scrolling', 'Keep the line you’re writing centred')}
       ${toggleRow('indent', 'Book-style paragraphs', 'Indent instead of spacing')}
@@ -810,6 +821,7 @@ function typographyPanel(anchor) {
     };
     r.onchange = saveSettings;
   });
+  $$('#t-dim button', p).forEach(b => b.onclick = () => { settings.dim = b.dataset.v; $$('#t-dim button', p).forEach(x => x.classList.toggle('on', x === b)); saveSettings(); });
   $$('.font-opt', p).forEach(b => b.onclick = () => { settings.font = b.dataset.font; $$('.font-opt', p).forEach(x => x.classList.toggle('on', x === b)); saveSettings(); });
   bindToggles(p);
 }
@@ -821,25 +833,41 @@ function bindToggles(root) {
 // ---------- Project details ----------
 function projectSheet() {
   const p = state.project;
-  let cover = p.cover, format = p.format || 'rich';
+  let cover = p.cover, format = p.format || 'rich', coverImage = p.coverImage || null;
   const s = sheet({
     title: 'Project details',
     body: `<div class="field"><label class="field-label" for="pd-title">Title</label><input class="input" id="pd-title" value="${esc(p.title)}" maxlength="120"></div>
       <div class="field"><label class="field-label" for="pd-sub">Subtitle</label><input class="input" id="pd-sub" value="${esc(p.subtitle || '')}" placeholder="Optional" maxlength="120"></div>
       <div class="field"><label class="field-label" for="pd-author">Author</label><input class="input" id="pd-author" value="${esc(p.author || '')}" maxlength="80"></div>
-      <div class="field"><span class="field-label">Cover</span><div class="cover-picks">${COVERS.map((c, i) => `<button class="cover-pick ${i === cover ? 'on' : ''}" data-i="${i}" style="--cbg:${c.bg}" aria-label="${c.name}"></button>`).join('')}</div></div>
+      <div class="field"><span class="field-label">Cover</span>
+        <div class="cover-edit"><div class="cover-thumb" id="pd-thumb"></div>
+          <div class="cover-edit-side"><div class="cover-picks">${COVERS.map((c, i) => `<button class="cover-pick ${i === cover ? 'on' : ''}" data-i="${i}" style="--cbg:${c.bg}" aria-label="${c.name}"></button>`).join('')}</div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn btn-quiet btn-sm" id="pd-upload">${icon('image')}Upload cover art</button><button class="btn btn-ghost btn-sm" id="pd-remove" ${coverImage ? '' : 'hidden'}>Remove</button></div>
+          <span class="note" style="text-align:left">Portrait images work best (2 : 3).</span></div></div></div>
+      <div class="split2">
+        <div class="field"><label class="field-label" for="pd-target">Word target</label><input class="input tnum" id="pd-target" type="number" min="0" step="1000" value="${p.target || ''}" placeholder="e.g. 80000"></div>
+        <div class="field"><label class="field-label" for="pd-deadline">Deadline</label><input class="input tnum" id="pd-deadline" type="date" value="${p.deadline || ''}"></div>
+      </div>
       <div class="field"><span class="field-label">Editor</span><div class="seg" id="pd-format"><button data-v="rich" class="${format === 'rich' ? 'on' : ''}">Rich text</button><button data-v="markdown" class="${format === 'markdown' ? 'on' : ''}">Markdown</button></div><span class="note" style="text-align:left">Rich text supports Markdown shortcuts too. Switching keeps your formatting.</span></div>`,
     foot: `<button class="btn btn-ghost" data-c>Cancel</button><button class="btn btn-primary" data-save>Save</button>`
   });
-  $$('.cover-pick', s.wrap).forEach(b => b.onclick = () => { cover = +b.dataset.i; $$('.cover-pick', s.wrap).forEach(x => x.classList.toggle('on', x === b)); });
+  const thumb = () => { const c = COVERS[cover % COVERS.length]; const t = $('#pd-thumb', s.wrap); t.style.background = coverImage ? `center/cover url('${coverImage}')` : c.bg; t.innerHTML = coverImage ? '' : `<span style="color:${c.fg}">${esc($('#pd-title', s.wrap).value || p.title)}</span>`; $('#pd-remove', s.wrap).hidden = !coverImage; };
+  $$('.cover-pick', s.wrap).forEach(b => b.onclick = () => { cover = +b.dataset.i; coverImage = null; $$('.cover-pick', s.wrap).forEach(x => x.classList.toggle('on', x === b)); thumb(); });
+  $('#pd-upload', s.wrap).onclick = () => {
+    const fi = el('<input type="file" accept="image/*">');
+    fi.onchange = async () => { if (!fi.files[0]) return; try { coverImage = await coverFromFile(fi.files[0]); thumb(); } catch (e) { errorToast(e); } };
+    fi.click();
+  };
+  $('#pd-remove', s.wrap).onclick = () => { coverImage = null; thumb(); };
+  thumb();
   $$('#pd-format button', s.wrap).forEach(b => b.onclick = () => { format = b.dataset.v; $$('#pd-format button', s.wrap).forEach(x => x.classList.toggle('on', x === b)); });
   $('[data-c]', s.wrap).onclick = s.close;
   $('[data-save]', s.wrap).onclick = async () => {
     await saveNow();
-    Object.assign(p, { title: $('#pd-title').value.trim() || 'Untitled project', subtitle: $('#pd-sub').value.trim(), author: $('#pd-author').value.trim(), cover, format });
+    Object.assign(p, { title: $('#pd-title').value.trim() || 'Untitled project', subtitle: $('#pd-sub').value.trim(), author: $('#pd-author').value.trim(), cover, format, coverImage, target: parseInt($('#pd-target').value, 10) || null, deadline: $('#pd-deadline').value || null });
     if (p.sample) p.sample = false;
     touch(p); await db.put('projects', p);
-    s.close(); renderProjectHead();
+    s.close(); renderProjectHead(); renderGoalStrip();
     if (state.scene) await loadScene(state.scene.id);
     toast('Project updated');
   };
@@ -878,6 +906,255 @@ function exportSheet() {
     } catch (err) { errorToast(err); btn.disabled = false; btn.innerHTML = `${icon('download')}Export`; }
   };
   refresh();
+}
+
+// ---------- Scene status ----------
+function statusMenu(anchor) {
+  menu(anchor, STATUSES.map(st => ({ k: st.id, icon: statusOf(state.scene).id === st.id ? 'check' : 'file', label: st.name, run: async () => {
+    state.scene.status = st.id; await saveItem(state.scene); updateCrumbs(); renderBinder();
+  } })));
+}
+
+// ---------- Cover art ----------
+async function coverFromFile(file) {
+  if (!file.type.startsWith('image/')) throw new Error('Choose an image file (JPG, PNG or WebP).');
+  const url = URL.createObjectURL(file);
+  try {
+    const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = () => rej(new Error('That image couldn’t be opened.')); i.src = url; });
+    const W = 600, H = 900, c = document.createElement('canvas'); c.width = W; c.height = H;
+    const s = Math.max(W / img.width, H / img.height), w = img.width * s, h = img.height * s;
+    c.getContext('2d').drawImage(img, (W - w) / 2, (H - h) / 2, w, h);
+    return c.toDataURL('image/jpeg', 0.84);
+  } finally { URL.revokeObjectURL(url); }
+}
+
+// ---------- Focus dimming (paragraph / sentence) ----------
+const HL = !!(window.CSS && CSS.highlights && window.Highlight);
+function applyDim() {
+  const ed = $('#editor'); if (!ed) return;
+  ed.classList.toggle('dim', settings.dim !== 'off');
+  ed.classList.toggle('dim-s', settings.dim === 'sentence' && HL);
+  if (HL && settings.dim !== 'sentence') CSS.highlights.delete('ink-sentence');
+  trackDim();
+}
+function textRange(root, start, end) {
+  const r = document.createRange();
+  const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  let pos = 0, n, setStart = false;
+  while ((n = w.nextNode())) {
+    const len = n.nodeValue.length;
+    if (!setStart && start <= pos + len) { r.setStart(n, start - pos); setStart = true; }
+    if (setStart && end <= pos + len) { r.setEnd(n, end - pos); return r; }
+    pos += len;
+  }
+  if (setStart) r.setEnd(root, root.childNodes.length);
+  return setStart ? r : null;
+}
+function trackDim() {
+  if (settings.dim === 'off') return;
+  const ed = $('#editor'); if (!ed || document.activeElement !== ed) return;
+  const b = currentBlock();
+  $$(':scope > .cur', ed).forEach(x => { if (x !== b) x.classList.remove('cur'); });
+  if (!b) return;
+  b.classList.add('cur');
+  if (settings.dim !== 'sentence' || !HL) return;
+  const sel = getSelection(); if (!sel.rangeCount) return;
+  const caret = sel.getRangeAt(0);
+  const pre = document.createRange(); pre.selectNodeContents(b);
+  try { pre.setEnd(caret.startContainer, caret.startOffset); } catch { return; }
+  const off = pre.toString().length, text = b.textContent;
+  const re = /[.!?…]+["”’)\]]*\s+/g; let m, start = 0, end = text.length;
+  while ((m = re.exec(text))) { const e = m.index + m[0].length; if (e <= off) start = e; else { end = e; break; } }
+  const r = textRange(b, start, end);
+  if (r) CSS.highlights.set('ink-sentence', new Highlight(r));
+}
+let dimRaf = 0;
+document.addEventListener('selectionchange', () => { if (settings.dim === 'off') return; cancelAnimationFrame(dimRaf); dimRaf = requestAnimationFrame(trackDim); });
+
+// ---------- Writing sprints ----------
+let sprintTimer = null;
+const mmss = ms => { const t = Math.max(0, Math.ceil(ms / 1000)); return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`; };
+function sprintPanel(anchor) {
+  let min = settings.sprintMin || 25, pomodoro = !!settings.pomodoro;
+  const p = popover(anchor, `<div class="type-panel sprint-panel">
+    <div><h4>Writing sprint</h4><p class="sp-sub">Write without stopping until the timer ends.</p></div>
+    <div class="dur-grid">${[10, 15, 25, 45, 60].map(m => `<button class="dur ${m === min ? 'on' : ''}" data-m="${m}"><b class="tnum">${m}</b><small>min</small></button>`).join('')}</div>
+    <div class="field"><label class="field-label" for="sp-goal" style="margin:0">Word goal (optional)</label><input class="input tnum" id="sp-goal" type="number" min="0" step="50" placeholder="e.g. 500" value="${settings.sprintGoal || ''}"></div>
+    <div class="toggle-row"><div class="t-text"><b>Pomodoro</b><span>Take a 5-minute break after each sprint</span></div><button class="switch" role="switch" aria-checked="${pomodoro}" id="sp-pomo" aria-label="Pomodoro"></button></div>
+    <button class="btn btn-primary" id="sp-start">${icon('play')}Start ${min}-minute sprint</button>
+  </div>`);
+  $$('.dur', p).forEach(b => b.onclick = () => { min = +b.dataset.m; $$('.dur', p).forEach(x => x.classList.toggle('on', x === b)); $('#sp-start', p).innerHTML = `${icon('play')}Start ${min}-minute sprint`; });
+  $('#sp-pomo', p).onclick = e => { pomodoro = !pomodoro; e.currentTarget.setAttribute('aria-checked', pomodoro); };
+  $('#sp-start', p).onclick = () => {
+    const goal = parseInt($('#sp-goal', p).value, 10) || null;
+    Object.assign(settings, { sprintMin: min, sprintGoal: goal, pomodoro }); saveSettings();
+    closePop(); startSprint(min, goal, pomodoro);
+  };
+}
+function startSprint(min, goal, pomodoro, round = 1) {
+  clearInterval(sprintTimer);
+  state.sprint = { phase: 'write', start: Date.now(), dur: min * 60000, min, goal, pomodoro, round, words: 0 };
+  sprintTimer = setInterval(tickSprint, 500);
+  if (state.view !== 'write') setView('write');
+  (isMd() ? $('#mdEditor') : $('#editor')).focus();
+  haptic(10); renderSprintPill();
+  toast(`Sprint started. ${min} minutes${goal ? `, aiming for ${num(goal)} words` : ''}.`, null, 2400);
+}
+function tickSprint() {
+  const sp = state.sprint; if (!sp) return clearInterval(sprintTimer);
+  if (Date.now() - sp.start >= sp.dur) return sp.phase === 'write' ? finishSprint() : endBreak();
+  renderSprintPill();
+}
+function renderSprintPill() {
+  const pill = $('#sprintPill'); if (!pill) return;
+  const sp = state.sprint;
+  $$('[data-act="sprint"].icon-btn').forEach(b => b.classList.toggle('on', !!sp));
+  if (!sp) { pill.hidden = true; return; }
+  pill.hidden = false;
+  const left = sp.dur - (Date.now() - sp.start);
+  const pct = Math.min(1, (Date.now() - sp.start) / sp.dur);
+  pill.className = 'sprint-pill ' + sp.phase;
+  pill.innerHTML = `${ring(pct, 18, 2.4)}<b class="tnum">${mmss(left)}</b>${sp.phase === 'write' ? `<span class="tnum">+${num(sp.words)}${sp.goal ? ` / ${num(sp.goal)}` : ''}</span>` : '<span>Break</span>'}`;
+}
+async function finishSprint(early = false) {
+  clearInterval(sprintTimer);
+  await saveNow();
+  const sp = state.sprint; if (!sp) return;
+  const mins = early ? Math.max(1, (Date.now() - sp.start) / 60000) : sp.min;
+  const wph = Math.round(sp.words / (mins / 60));
+  const hit = sp.goal && sp.words >= sp.goal;
+  state.sprint = null; renderSprintPill();
+  sound.chime(); if (hit) haptic([12, 60, 18]);
+  const hist = await db.meta('sprints', []);
+  hist.push({ at: Date.now(), min: Math.round(mins), words: sp.words, projectId: state.project?.id }); await db.setMeta('sprints', hist.slice(-200));
+  const best = Math.max(...hist.map(h => h.words / (h.min / 60) || 0));
+  const s = sheet({ title: early ? 'Sprint ended' : 'Time’s up', foot: null, body: `
+    <div class="sprint-result">
+      ${hit ? `<div class="sr-badge"><div class="cb-burst"><i></i><i></i><i></i><svg viewBox="0 0 24 24" class="cb-check"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></div><b>Goal reached</b></div>` : ''}
+      <div class="sr-big tnum">${num(sp.words)}<small>words</small></div>
+      <div class="sr-row tnum"><div><b>${Math.round(mins)}</b><span>minute${Math.round(mins) === 1 ? '' : 's'}</span></div><div><b>${num(wph)}</b><span>words per hour</span></div><div><b>${sp.goal ? Math.round(sp.words / sp.goal * 100) + '%' : '—'}</b><span>of goal</span></div></div>
+      ${wph >= best && hist.length > 1 && sp.words > 0 ? '<p class="note">Your fastest sprint yet.</p>' : ''}
+      <div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap">
+        ${sp.pomodoro ? `<button class="btn btn-primary" data-break>${icon('cup')}Start 5-minute break</button><button class="btn btn-quiet" data-again>Skip break</button>` : `<button class="btn btn-primary" data-again>${icon('play')}Another ${sp.min} minutes</button><button class="btn btn-quiet" data-done>Done</button>`}
+      </div>
+    </div>` });
+  const again = $('[data-again]', s.wrap); if (again) again.onclick = () => { s.close(); startSprint(sp.min, sp.goal, sp.pomodoro, sp.round + 1); };
+  const done = $('[data-done]', s.wrap); if (done) done.onclick = s.close;
+  const br = $('[data-break]', s.wrap); if (br) br.onclick = () => { s.close(); startBreak(sp); };
+}
+function startBreak(prev) {
+  state.sprint = { phase: 'break', start: Date.now(), dur: 5 * 60000, prev };
+  sprintTimer = setInterval(tickSprint, 500); renderSprintPill();
+}
+function endBreak() {
+  clearInterval(sprintTimer);
+  const prev = state.sprint.prev; state.sprint = null; renderSprintPill(); sound.chime();
+  toast('Break’s over', { label: 'Next sprint', run: () => startSprint(prev.min, prev.goal, prev.pomodoro, prev.round + 1) }, 0);
+}
+function sprintMenu(anchor) {
+  const sp = state.sprint;
+  menu(anchor, sp.phase === 'write'
+    ? [{ k: 'end', icon: 'stop', label: 'End sprint now', run: () => finishSprint(true) }, { k: 'cancel', icon: 'x', label: 'Cancel sprint', danger: true, run: () => { clearInterval(sprintTimer); state.sprint = null; renderSprintPill(); } }]
+    : [{ k: 'skip', icon: 'play', label: 'Skip break', run: () => { clearInterval(sprintTimer); const p = state.sprint.prev; state.sprint = null; startSprint(p.min, p.goal, p.pomodoro, p.round + 1); } }, { k: 'stop', icon: 'x', label: 'Stop', run: () => { clearInterval(sprintTimer); state.sprint = null; renderSprintPill(); } }]);
+}
+
+// ---------- Soundscapes ----------
+function soundPanel(anchor) {
+  const cur = sound.playing();
+  const p = popover(anchor, `<div class="type-panel">
+    <div><h4>Soundscapes</h4><p class="sp-sub">Generated on your device, so they play offline.</p></div>
+    <div class="snd-grid">${sound.SOUNDS.map(x => `<button class="snd ${cur === x.id ? 'on' : ''}" data-s="${x.id}">${icon(x.icon)}<span>${x.name}</span></button>`).join('')}</div>
+    <label class="slider-row"><span>${icon('volume')}</span><input type="range" id="snd-vol" min="0" max="1" step="0.05" value="${settings.volume}"><output></output></label>
+    <button class="btn btn-quiet btn-sm" id="snd-off" ${cur ? '' : 'hidden'}>${icon('stop')}Stop</button>
+  </div>`);
+  const vol = $('#snd-vol', p);
+  const fill = () => vol.style.setProperty('--p', vol.value * 100 + '%');
+  fill();
+  vol.oninput = () => { settings.volume = +vol.value; sound.setVolume(settings.volume); fill(); };
+  vol.onchange = saveSettings;
+  const mark = () => { const c = sound.playing(); $$('.snd', p).forEach(b => b.classList.toggle('on', b.dataset.s === c)); $('#snd-off', p).hidden = !c; $$('[data-act="sound"]').forEach(b => b.classList.toggle('on', !!c)); };
+  $$('.snd', p).forEach(b => b.onclick = () => { if (sound.playing() === b.dataset.s) sound.stop(); else { sound.setVolume(settings.volume); sound.play(b.dataset.s); } mark(); haptic(5); });
+  $('#snd-off', p).onclick = () => { sound.stop(); mark(); };
+}
+
+// ---------- Goals & stats ----------
+async function statsSheet() {
+  if (state.project) await saveNow();
+  const goal = settings.dailyGoal;
+  const sum = await stats.summary(goal);
+  const projects = (await db.all('projects')).filter(p => !p.deleted).sort((a, b) => (b.lastEdited || b.updatedAt) - (a.lastEdited || a.updatedAt));
+  const pst = await Promise.all(projects.map(p => projectStats(p.id)));
+  const weekDelta = sum.lastWeek ? Math.round((sum.week - sum.lastWeek) / sum.lastWeek * 100) : null;
+
+  // heatmap: 26 weeks, Monday-first
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const dow = (today.getDay() + 6) % 7;
+  const start = stats.addDays(today, -(25 * 7 + dow));
+  let cells = '', months = '', lastMonth = -1;
+  for (let w = 0; w < 26; w++) {
+    const first = stats.addDays(start, w * 7);
+    const m = first.getMonth();
+    months += `<span style="grid-column:${w + 1}">${m !== lastMonth ? first.toLocaleDateString(undefined, { month: 'short' }) : ''}</span>`;
+    lastMonth = m;
+    for (let d = 0; d < 7; d++) {
+      const day = stats.addDays(start, w * 7 + d);
+      if (day > today) { cells += `<i style="grid-column:${w + 1};grid-row:${d + 1}" class="fut"></i>`; continue; }
+      const words = sum.byDay.get(stats.dayKey(day)) || 0;
+      const lv = !words ? 0 : words >= goal ? 4 : words >= goal * 0.5 ? 3 : words >= goal * 0.25 ? 2 : 1;
+      cells += `<i style="grid-column:${w + 1};grid-row:${d + 1}" class="l${lv}" title="${day.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}: ${num(words)} words"></i>`;
+    }
+  }
+  // best hours chart
+  const maxH = Math.max(1, ...sum.hours);
+  const bars = sum.hours.map((v, h) => `<div class="hb ${h === sum.peak ? 'peak' : v ? 'has' : ''}" title="${stats.hourLabel(h)}: ${num(v)} words"><i style="height:${v ? Math.max(4, v / maxH * 100) : 0}%"></i></div>`).join('');
+  const hourAxis = [0, 6, 12, 18].map(h => `<span style="left:${(h + 0.5) / 24 * 100}%">${stats.hourLabel(h)}</span>`).join('');
+
+  const projRows = projects.map((p, i) => {
+    const pl = stats.plan(p, pst[i].words, sum.byProjectDay);
+    const c = COVERS[p.cover % COVERS.length];
+    let line = 'Set a word target to see your pace';
+    if (pl) {
+      if (pl.remaining === 0) line = `<b class="ok">Target reached</b>`;
+      else if (pl.daysLeft === undefined) line = `${num(pl.remaining)} words to go · add a deadline to plan your pace`;
+      else if (pl.daysLeft <= 0) line = `<b class="late">Deadline passed</b> · ${num(pl.remaining)} words to go`;
+      else line = `<b class="${pl.onTrack ? 'ok' : 'late'}">${num(pl.perDay)} words a day</b> for ${pl.daysLeft} day${pl.daysLeft === 1 ? '' : 's'} · ${pl.onTrack ? 'on track' : `you’re averaging ${num(pl.pace)}`}`;
+    }
+    return `<div class="plan-row" data-pid="${p.id}">
+      <div class="plan-cover" style="background:${p.coverImage ? `center/cover url('${p.coverImage}')` : c.bg}"></div>
+      <div class="plan-main"><div class="plan-top"><b>${esc(p.title)}</b><span class="tnum">${num(pst[i].words)}${p.target ? ` / ${num(p.target)}` : ''} words</span></div>
+        <div class="bar"><i style="width:${pl ? pl.pct * 100 : 0}%"></i></div>
+        <div class="plan-line">${line}</div></div>
+      <div class="plan-inputs"><label><span>Target</span><input class="input tnum" type="number" min="0" step="1000" data-pf="target" value="${p.target || ''}" placeholder="80000"></label><label><span>Deadline</span><input class="input tnum" type="date" data-pf="deadline" value="${p.deadline || ''}"></label></div>
+    </div>`;
+  }).join('');
+
+  const s = sheet({ title: 'Goals & stats', wide: 'x', foot: null, sub: 'Counted from words you add on this device and the devices you sync with.', body: `
+    <div class="tiles">
+      <div class="tile tile-today">${ring(sum.today / goal, 72, 5)}<div class="tt-main"><span class="t-label">Today</span><b class="tnum">${num(sum.today)}<small> words</small></b><label class="goal-edit">Daily goal <input class="tnum" type="number" id="st-goal" min="50" step="50" value="${goal}"></label></div></div>
+      <div class="tile"><span class="t-label">${icon('flame')}Streak</span><b class="tnum">${sum.streak}<small> day${sum.streak === 1 ? '' : 's'}</small></b><span class="t-sub tnum">Best ${sum.best} · goal met each day</span></div>
+      <div class="tile"><span class="t-label">${icon('calendar')}Last 7 days</span><b class="tnum">${num(sum.week)}</b><span class="t-sub tnum">${weekDelta === null ? 'words written' : `${weekDelta >= 0 ? '▲' : '▼'} ${Math.abs(weekDelta)}% vs previous week`}</span></div>
+      <div class="tile"><span class="t-label">${icon('timer')}Pace</span><b class="tnum">${sum.wph ? num(sum.wph) : '—'}<small> words/hr</small></b><span class="t-sub tnum">${sum.minutes >= 1 ? `${Math.round(sum.minutes / 60 * 10) / 10} h of active writing` : 'Shows after some writing time'}</span></div>
+    </div>
+    <div class="group"><div class="group-title">Every day you wrote</div>
+      <div class="heat-wrap"><div class="heat-days"><span></span><span>Mon</span><span></span><span>Wed</span><span></span><span>Fri</span><span></span></div>
+        <div class="heat-scroll"><div class="heat-months">${months}</div><div class="heat">${cells}</div></div></div>
+      <div class="heat-legend"><span>Less</span><i class="l0"></i><i class="l1"></i><i class="l2"></i><i class="l3"></i><i class="l4"></i><span>Goal met</span></div>
+    </div>
+    <div class="group"><div class="group-title">When you write best</div>
+      <div class="card hours-card"><p class="hours-lead">${sum.peak !== null ? `You write the most around <b>${stats.hourLabel(sum.peak)}</b>.` : 'Write for a while and your best hours will show here.'}</p>
+      <div class="hours" role="img" aria-label="Words written by hour of day"><div class="hours-bars">${bars}</div><div class="hours-axis">${hourAxis}</div></div></div>
+    </div>
+    <div class="group"><div class="group-title">Deadlines</div><div class="card-list plans">${projRows || '<div class="empty-note">No projects yet.</div>'}</div></div>` });
+
+  $('#st-goal', s.wrap).onchange = async e => { settings.dailyGoal = Math.max(50, parseInt(e.target.value, 10) || 500); await saveSettings(); s.close(); statsSheet(); renderGoalStrip(); if (!$('#library').hidden) renderLibrary(); };
+  $$('[data-pf]', s.wrap).forEach(inp => inp.onchange = async () => {
+    const pid = inp.closest('[data-pid]').dataset.pid;
+    const p = await db.get('projects', pid);
+    p[inp.dataset.pf] = inp.dataset.pf === 'target' ? (parseInt(inp.value, 10) || null) : (inp.value || null);
+    touch(p); await db.put('projects', p);
+    if (state.project && state.project.id === pid) Object.assign(state.project, { target: p.target, deadline: p.deadline, rev: p.rev, revs: p.revs, updatedAt: p.updatedAt });
+    s.close(); statsSheet(); renderGoalStrip();
+  });
 }
 
 // ---------------------------------------------------------------- Import
@@ -1202,7 +1479,10 @@ async function autoFolderBackup() {
 async function boot() {
   try {
     settings = { ...DEFAULTS, ...(await db.meta('settings', {})) };
+    if (!settings.themeV2) { if (settings.theme === 'system') settings.theme = 'light'; settings.themeV2 = true; await db.setMeta('settings', settings); }
     applySettings();
+    initBoard({ state, saveItem, openScene: async id => { await setView('write'); await loadScene(id); }, addScene, addChapter,
+      onChange: (o = {}) => { renderBinder(); updateCrumbs(); updateCounts(); if (!o.skipView) renderCurrentView(); } });
     state.device = await deviceInfo();
     if (!(await db.meta('seeded'))) { await seedSample(); await db.setMeta('seeded', true); }
     if (!(await db.meta('askedPersist'))) { await db.setMeta('askedPersist', true); navigator.storage?.persist?.().catch(() => {}); }

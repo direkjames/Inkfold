@@ -1,7 +1,7 @@
 // Inkfold — local storage layer (IndexedDB). Everything stays on this device.
 const DB_NAME = 'inkfold';
-const DB_VERSION = 1;
-const STORES = ['projects', 'items', 'meta', 'snapshots', 'tombstones'];
+const DB_VERSION = 2;
+const STORES = ['projects', 'items', 'meta', 'snapshots', 'tombstones', 'log'];
 
 let dbp = null;
 
@@ -19,6 +19,7 @@ function open() {
       if (!db.objectStoreNames.contains('meta')) db.createObjectStore('meta');
       if (!db.objectStoreNames.contains('snapshots')) db.createObjectStore('snapshots', { keyPath: 'id' });
       if (!db.objectStoreNames.contains('tombstones')) db.createObjectStore('tombstones', { keyPath: 'id' });
+      if (!db.objectStoreNames.contains('log')) db.createObjectStore('log', { keyPath: 'id' }); // daily writing log (this device)
     };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
@@ -66,20 +67,22 @@ export const db = {
 
   // Full library dump (used for backups, snapshots and sync)
   async dump() {
-    const [projects, items, tombstones] = await Promise.all([this.all('projects'), this.all('items'), this.all('tombstones')]);
-    return { format: 'inkfold-library', version: 1, exportedAt: Date.now(), projects, items, tombstones };
+    const [projects, items, tombstones, log] = await Promise.all([this.all('projects'), this.all('items'), this.all('tombstones'), this.all('log')]);
+    return { format: 'inkfold-library', version: 1, exportedAt: Date.now(), projects, items, tombstones, log };
   },
   // Replace everything with a dump
   async replaceAll(data) {
-    return tx(['projects', 'items', 'tombstones'], 'readwrite', t => {
+    return tx(['projects', 'items', 'tombstones', 'log'], 'readwrite', t => {
       ['projects', 'items', 'tombstones'].forEach(s => t.objectStore(s).clear());
+      if (data.log) { t.objectStore('log').clear(); data.log.forEach(l => t.objectStore('log').put(l)); }
       (data.projects || []).forEach(p => t.objectStore('projects').put(p));
       (data.items || []).forEach(i => t.objectStore('items').put(i));
       (data.tombstones || []).forEach(x => t.objectStore('tombstones').put(x));
     });
   },
-  async writeBatch({ projects = [], items = [], tombstones = [], deleteItems = [], deleteProjects = [] }) {
-    return tx(['projects', 'items', 'tombstones'], 'readwrite', t => {
+  async writeBatch({ projects = [], items = [], tombstones = [], deleteItems = [], deleteProjects = [], log = [] }) {
+    return tx(['projects', 'items', 'tombstones', 'log'], 'readwrite', t => {
+      log.forEach(l => t.objectStore('log').put(l));
       projects.forEach(p => t.objectStore('projects').put(p));
       items.forEach(i => t.objectStore('items').put(i));
       tombstones.forEach(x => t.objectStore('tombstones').put(x));
@@ -91,6 +94,7 @@ export const db = {
   // Snapshots: a full copy of the library, taken before sync / restore / import.
   async snapshot(reason) {
     const data = await this.dump();
+    delete data.log; // snapshots cover writing, not stats
     const snap = { id: 'snap-' + Date.now(), createdAt: Date.now(), reason, data,
       counts: { projects: data.projects.filter(p => !p.deleted).length, scenes: data.items.filter(i => i.type === 'scene' && !i.deleted).length } };
     await this.put('snapshots', snap);
