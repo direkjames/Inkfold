@@ -90,8 +90,9 @@ export async function restoreBackup(data, mode) {
 
 // ---------- Single project files (.inkfold) ----------
 export async function exportProjectFile(projectId) {
-  const project = await db.get('projects', projectId);
-  const items = await db.byProject(projectId);
+  const project = { ...(await db.get('projects', projectId)) };
+  delete project.enc; // an exported project file is a plain copy
+  const items = (await db.byProject(projectId)).map(i => { const o = { ...i }; delete o._dec; delete o.enc; return o; });
   const blob = new Blob([JSON.stringify({ format: 'inkfold-project', version: 1, exportedAt: Date.now(), project, items })], { type: 'application/json' });
   return saveFile(blob, `${safeName(project.title)}.inkfold`, { preferShare: true });
 }

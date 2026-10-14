@@ -2,8 +2,8 @@
 import { db, deviceInfo } from './db.js';
 import { loadLib, LIBS } from './libs.js';
 
-const ITEM_FIELDS = ['projectId', 'type', 'parentId', 'order', 'title', 'content', 'deleted', 'status', 'label', 'pov', 'synopsis', 'target', 'data'];
-const PROJECT_FIELDS = ['title', 'subtitle', 'author', 'cover', 'format', 'deleted', 'target', 'deadline', 'coverImage'];
+const ITEM_FIELDS = ['projectId', 'type', 'parentId', 'order', 'title', 'content', 'deleted', 'status', 'label', 'pov', 'synopsis', 'target', 'data', 'when', 'enc'];
+const PROJECT_FIELDS = ['title', 'subtitle', 'author', 'cover', 'format', 'deleted', 'target', 'deadline', 'coverImage', 'mode', 'compile', 'enc', 'align'];
 const sig = (r, f) => JSON.stringify(f.map(k => r[k] ?? null));
 
 function hash(str) {

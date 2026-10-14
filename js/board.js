@@ -168,6 +168,7 @@ export function sceneDetails(id) {
         <div class="field"><label class="field-label" for="sd-pov">Point of view</label><input class="input" id="sd-pov" value="${esc(it.pov || '')}" placeholder="Whose eyes?" maxlength="40"></div>
         <div class="field"><label class="field-label" for="sd-target">Word target</label><input class="input tnum" id="sd-target" type="number" min="0" step="100" value="${it.target || ''}" placeholder="e.g. 1500"></div>
       </div>
+      ${ctx.whenField ? `<div class="field"><span class="field-label">When it happens</span><button class="input when-btn" id="sdWhen">${esc(ctx.whenField(it) || 'Not on the timeline yet')}</button></div>` : ''}
       <div class="field"><span class="field-label">Label</span><div class="lbl-pop" id="sd-label"><button class="lbl-sw none ${!label ? 'on' : ''}" data-l="" aria-label="No label">${icon('x')}</button>${LABELS.map(l => `<button class="lbl-sw ${label === l.id ? 'on' : ''}" data-l="${l.id}" style="--lbl:${l.color}" aria-label="${l.name}"></button>`).join('')}</div></div>`,
     foot: `<button class="btn btn-ghost" data-open>${icon('pen')}Open in editor</button><button class="btn btn-primary" data-save>Save</button>`
   });
@@ -178,5 +179,6 @@ export function sceneDetails(id) {
     await ctx.saveItem(it); ctx.onChange(); s.close();
   };
   $('[data-save]', s.wrap).onclick = save;
+  const wb = $('#sdWhen', s.wrap); if (wb) wb.onclick = async () => { await save(); ctx.whenSheet(id); };
   $('[data-open]', s.wrap).onclick = async () => { await save(); ctx.openScene(id); };
 }

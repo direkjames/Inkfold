@@ -1,18 +1,24 @@
 // Inkfold — app
 import { db, deviceInfo } from './db.js';
-import { COVERS, buildTree, flatScenes, newProjectRecord, newChapter, newScene, seedSample, projectStats, touch, STATUSES, LABELS, statusOf, labelOf } from './model.js';
+import { COVERS, buildTree, flatScenes, newProjectRecord, newChapter, newScene, seedSample, projectStats, touch, createProjectFrom, STATUSES, LABELS, statusOf, labelOf } from './model.js';
 import * as stats from './stats.js';
 import * as sound from './sound.js';
 import { initBoard, renderBoard, renderOutline, sceneDetails, labelMenu } from './board.js';
 import { initBible, renderBible, nameIndex, nameRegex, hoverCardFor, hideHover, relSheet, KINDS } from './bible.js';
 import * as revise from './revise.js';
+import { MODES, modeOf, T, poetryEnter, renderSyllables, MOODS, moodFace, entryFor, renderCalendar, resetCalendar, dateKey } from './modes.js';
+import * as sp from './screenplay.js';
+import { initTimeline, renderTimeline, whenSheet, whenLabel } from './timeline.js';
+import { compileSheet } from './compile.js';
+import * as sec from './security.js';
+import { openPalette, paletteOpen, closePalette, shortcutsSheet } from './palette.js';
 import { sanitizeHtml, htmlWords, htmlToMd, mdToHtml, countWords, blocksToHtml, plainToBlocks, htmlToBlocks } from './text.js';
 import * as io from './io.js';
 import * as sync from './sync.js';
 import { loadLib, LIBS } from './libs.js';
 import { ICONS, icon, MARK, $, $$, esc, num, el, debounce, ago, haptic, toast, errorToast, closePop, popOpen, popover, menu, sheets, sheet, confirmSheet } from './ui.js';
 
-const VERSION = '1.2.0';
+const VERSION = '1.3.0';
 
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape') {
@@ -31,7 +37,7 @@ const FONTS = {
   hanken: { name: 'Hanken', css: "'Hanken Grotesk', system-ui, sans-serif", note: 'Clean sans' },
   plex: { name: 'Plex Mono', css: "'IBM Plex Mono', ui-monospace, monospace", note: 'Typewriter' },
 };
-const DEFAULTS = { theme: 'light', font: 'newsreader', size: 19, lh: 1.7, width: 680, typewriter: true, smart: true, indent: false, dim: 'off', dailyGoal: 500, volume: 0.5, revRound: 0, showRev: true, nameHints: true };
+const DEFAULTS = { theme: 'light', font: 'newsreader', size: 19, lh: 1.7, width: 680, typewriter: true, smart: true, indent: false, dim: 'off', dailyGoal: 500, volume: 0.5, revRound: 0, showRev: true, nameHints: true, darkTheme: 'dark', syllables: true };
 let settings = { ...DEFAULTS };
 
 function applySettings() {
@@ -45,13 +51,16 @@ function applySettings() {
   const ed = $('#editor'); if (ed) ed.classList.toggle('indent', !!settings.indent);
   const dark = isDark();
   $$('[data-act="theme"]').forEach(b => { b.innerHTML = icon(dark ? 'sun' : 'moon'); b.title = dark ? 'Switch to Paper (light)' : 'Switch to Ink (dark)'; b.setAttribute('aria-label', b.title); });
-  $$('meta[name="theme-color"]').forEach(m => m.setAttribute('content', dark ? '#0d1017' : '#eff0ec'));
+  $$('meta[name="theme-color"]').forEach(m => m.setAttribute('content', getComputedStyle(document.documentElement).getPropertyValue('--bg').trim() || (dark ? '#0d1017' : '#eff0ec')));
   applyDim();
 }
-const isDark = () => settings.theme === 'dark' || (settings.theme === 'system' && matchMedia('(prefers-color-scheme: dark)').matches);
+const DARK_THEMES = ['dark', 'midnight', 'sepia', 'oled'];
+const THEMES = [['light', 'Paper', '#eff0ec', '#fafbf8', '#2a7865'], ['dark', 'Ink', '#0d1017', '#151a24', '#86cdb9'], ['midnight', 'Midnight', '#0b1020', '#141c36', '#8fb4ff'], ['sepia', 'Sepia Night', '#17120d', '#241c14', '#e0a95a'], ['oled', 'OLED Black', '#000000', '#0c0c0c', '#86cdb9'], ['system', 'Match device', '#eff0ec', '#0d1017', '#2a7865']];
+const isDark = () => DARK_THEMES.includes(settings.theme) || (settings.theme === 'system' && matchMedia('(prefers-color-scheme: dark)').matches);
 function toggleTheme() {
   document.documentElement.classList.add('theme-fade');
-  settings.theme = isDark() ? 'light' : 'dark';
+  if (DARK_THEMES.includes(settings.theme)) settings.darkTheme = settings.theme;
+  settings.theme = isDark() ? 'light' : (settings.darkTheme || 'dark');
   saveSettings(); haptic(6);
   setTimeout(() => document.documentElement.classList.remove('theme-fade'), 500);
 }
@@ -156,10 +165,11 @@ function coverHtml(p, st) {
   return `<button class="book" data-open="${p.id}" aria-label="Open ${esc(p.title)}">
     ${p.coverImage ? `<div class="cover has-img" style="--cbg:${c.bg};background-image:url('${p.coverImage}')"></div>` : `<div class="cover" style="--cbg:${c.bg};--cfg:${c.fg};--cline:${c.line}">
       <div class="frame"></div>
-      <div class="c-kicker">${p.sample ? 'Sample' : `${st.chapters} chapter${st.chapters === 1 ? '' : 's'}`}</div>
+      <div class="c-kicker">${p.sample ? 'Sample' : modeOf(p) === 'novel' ? `${st.chapters} chapter${st.chapters === 1 ? '' : 's'}` : MODES[modeOf(p)].name}</div>
       <div><div class="c-title">${esc(p.title)}</div>${p.subtitle && !p.sample ? `<div class="c-sub">${esc(p.subtitle)}</div>` : ''}</div>
       <div class="c-foot"><span>${esc(p.author || '')}</span><svg class="c-fold" viewBox="0 0 16 16"><path d="M3 2h7l3 3v9H3z" fill="none" stroke="currentColor" stroke-width="1"/><path d="M10 2v3h3" fill="none" stroke="currentColor" stroke-width="1"/></svg></div>
     </div>`}
+    ${p.enc ? `<span class="cover-lock" title="Encrypted">${icon('lock')}</span>` : ''}
     <div class="b-meta"><b>${esc(p.title)}${p.sample ? '<span class="tag-sample">Sample</span>' : ''}</b><span class="tnum">${num(st.words)} words · ${ago(p.lastEdited || p.updatedAt)}</span></div>
   </button>`;
 }
@@ -167,19 +177,26 @@ function coverHtml(p, st) {
 function newProjectSheet() {
   let cover = Math.floor(Math.random() * COVERS.length);
   const s = sheet({
-    title: 'New project', sub: 'Give it a working title. You can change everything later.',
-    body: `<div class="field"><label class="field-label" for="np-title">Title</label><input class="input" id="np-title" placeholder="The Long Way Home" autofocus maxlength="120"></div>
+    title: 'New project', sub: 'Pick what you’re writing and give it a working title. You can change everything later.',
+    body: `<div class="mode-picks">${Object.entries(MODES).map(([k, m], i) => `<button class="mode-pick ${i === 0 ? 'on' : ''}" data-mode="${k}"><span class="mp-ic">${icon(m.icon)}</span><b>${m.name}</b><span>${m.blurb}</span></button>`).join('')}</div>
+      <div class="field"><label class="field-label" for="np-title">Title</label><input class="input" id="np-title" placeholder="The Long Way Home" autofocus maxlength="120"></div>
       <div class="field"><label class="field-label" for="np-author">Author</label><input class="input" id="np-author" placeholder="Your name or pen name" maxlength="80"></div>
       <div class="field"><span class="field-label">Cover</span><div class="cover-picks">${COVERS.map((c, i) => `<button class="cover-pick ${i === cover ? 'on' : ''}" data-i="${i}" style="--cbg:${c.bg}" aria-label="${c.name}"></button>`).join('')}</div></div>`,
     foot: `<button class="btn btn-ghost" data-close2>Cancel</button><button class="btn btn-primary" data-create>Create project</button>`
   });
+  let mode = 'novel';
+  $$('.mode-pick', s.wrap).forEach(b => b.onclick = () => { mode = b.dataset.mode; $$('.mode-pick', s.wrap).forEach(x => x.classList.toggle('on', x === b)); const ph = { novel: 'The Long Way Home', screenplay: 'Night Ferry', poetry: 'Salt and Small Hours', journal: 'My Journal' }; $('#np-title').placeholder = ph[mode]; });
   $$('.cover-pick', s.wrap).forEach(b => b.onclick = () => { cover = +b.dataset.i; $$('.cover-pick', s.wrap).forEach(x => x.classList.toggle('on', x === b)); });
   $('[data-close2]', s.wrap).onclick = s.close;
   const create = async () => {
     const author = $('#np-author').value.trim();
-    const p = { ...newProjectRecord($('#np-title').value.trim() || 'Untitled project'), cover, author };
-    const ch = newChapter(p.id, 1, 'Chapter One');
-    const sc = newScene(p.id, ch.id, 1, 'Scene 1');
+    const p = { ...newProjectRecord($('#np-title').value.trim() || $('#np-title').placeholder || 'Untitled project'), cover, author, mode };
+    let ch, sc;
+    if (mode === 'journal') { const r = entryFor([], p.id, new Date(), { chapter: newChapter, scene: newScene }); ch = r.chapter; sc = r.scene; touch(ch); touch(sc); }
+    else if (mode === 'screenplay') { ch = newChapter(p.id, 1, 'Act One'); sc = newScene(p.id, ch.id, 1, 'Opening', '<p data-el="heading"><br></p>'); }
+    else if (mode === 'poetry') { ch = newChapter(p.id, 1, 'Poems'); sc = newScene(p.id, ch.id, 1, 'Untitled poem'); }
+    else { ch = newChapter(p.id, 1, 'Chapter One'); sc = newScene(p.id, ch.id, 1, 'Scene 1'); }
+    if (mode !== 'novel') p.format = 'rich';
     await db.writeBatch({ projects: [touch(p)], items: [ch, sc] });
     if (author) await db.setMeta('lastAuthor', author);
     s.close(); haptic(); openProject(p.id, sc.id);
@@ -193,6 +210,12 @@ function newProjectSheet() {
 async function openProject(id, sceneId) {
   const p = await db.get('projects', id);
   if (!p || p.deleted) return renderLibrary();
+  if (p.enc && !sec.isUnlocked(id)) {
+    const pass = await sec.passwordSheet({ title: 'Unlock project', sub: `“${esc(p.title)}” is encrypted. Enter its password to open it.`, confirm: false, action: 'Unlock' });
+    if (!pass) return;
+    if (!(await sec.unlockProject(p, pass))) { toast('That password isn’t right'); haptic([30, 40, 30]); return openProject(id, sceneId); }
+  }
+  resetCalendar();
   state.project = p;
   state.items = await db.byProject(id);
   const tree = buildTree(state.items);
@@ -216,6 +239,8 @@ async function openProject(id, sceneId) {
 
 function renderWorkspace() {
   const ws = $('#workspace');
+  const mode = modeOf(state.project);
+  document.body.dataset.mode = mode;
   ws.innerHTML = `
     <aside class="binder" aria-label="Binder">
       <div class="binder-head">
@@ -227,7 +252,7 @@ function renderWorkspace() {
         <button class="goal-strip" data-act="stats" id="goalStrip"></button>
         <div id="targetStrip"></div>
         <div class="totals tnum"><span>Manuscript</span><span><b id="projWords">0</b> words</span></div>
-        <button class="btn btn-quiet btn-sm" data-act="add-chapter">${icon('plus')}New chapter</button>
+        ${mode === 'journal' ? `<button class="btn btn-primary btn-sm" data-act="today">${icon('pen')}Today’s entry</button>` : `<button class="btn btn-quiet btn-sm" data-act="add-chapter">${icon('plus')}New ${T(state.project).chapter.toLowerCase()}</button>`}
       </div>
     </aside>
     <div class="drawer-scrim" data-act="close-drawer"></div>
@@ -237,17 +262,19 @@ function renderWorkspace() {
         <div class="crumbs"><span class="c1" id="crumbChapter"></span><span class="sep">/</span><span class="c2" id="crumbScene"></span></div>
         <div class="seg view-seg" id="viewSeg" role="tablist" aria-label="View">
           <button data-view="write" role="tab" title="Write">${icon('pen')}<span>Write</span></button>
-          <button data-view="board" role="tab" title="Corkboard">${icon('board')}<span>Board</span></button>
+          ${mode === 'journal' ? `<button data-view="calendar" role="tab" title="Calendar">${icon('calendar')}<span>Calendar</span></button>` : `<button data-view="board" role="tab" title="Corkboard">${icon('board')}<span>Board</span></button>`}
           <button data-view="outline" role="tab" title="Outline">${icon('outline')}<span>Outline</span></button>
+          ${mode === 'novel' || mode === 'screenplay' ? `<button data-view="timeline" role="tab" title="Timeline">${icon('timeline')}<span>Timeline</span></button>` : ''}
           <button data-view="bible" role="tab" title="Story bible">${icon('bible')}<span>Bible</span></button>
         </div>
         <div class="fmt" id="fmtBar" role="toolbar" aria-label="Formatting">
+          ${mode === 'screenplay' ? `<button class="el-pick" data-act="element" id="elPick" title="Element (Tab to change)"><span id="elName">Action</span>${icon('chev')}</button>` : ''}
           <button class="icon-btn" data-fmt="bold" title="Bold (Ctrl+B)" aria-label="Bold"><b>B</b></button>
           <button class="icon-btn" data-fmt="italic" title="Italic (Ctrl+I)" aria-label="Italic"><i>I</i></button>
-          <button class="icon-btn" data-fmt="heading" title="Heading (# then space)" aria-label="Heading"><span class="h">H</span></button>
+          ${mode === 'screenplay' ? '' : `${mode === 'poetry' ? `<button class="icon-btn ${state.project.align === 'center' ? 'on' : ''}" data-act="poem-align" title="Centre the poem" aria-label="Centre the poem">${icon('align')}</button><button class="icon-btn syl-btn ${settings.syllables ? 'on' : ''}" data-act="syllables" title="Syllable counts" aria-label="Syllable counts"><span class="h">7</span></button>` : `<button class="icon-btn" data-fmt="heading" title="Heading (# then space)" aria-label="Heading"><span class="h">H</span></button>
           <button class="icon-btn" data-fmt="quote" title="Quote (> then space)" aria-label="Quote">${icon('quote')}</button>
-          <button class="icon-btn" data-fmt="list" title="List (- then space)" aria-label="List">${icon('list')}</button>
-          <button class="icon-btn" data-fmt="break" title="Scene break (*** then Enter)" aria-label="Scene break"><span class="ast">⁂</span></button>
+          <button class="icon-btn" data-fmt="list" title="List (- then space)" aria-label="List">${icon('list')}</button>`}
+          <button class="icon-btn" data-fmt="break" title="${mode === 'poetry' ? 'Section break' : 'Scene break (*** then Enter)'}" aria-label="Scene break"><span class="ast">⁂</span></button>`}
           <button class="icon-btn" data-fmt="comment" title="Add a margin note" aria-label="Add a margin note">${icon('comment')}</button>
         </div>
         <span class="rev-ind" id="revIndicator" hidden></span>
@@ -261,7 +288,7 @@ function renderWorkspace() {
         <article class="page">
           <div class="scene-kicker" id="sceneKicker"></div>
           <input class="scene-title" id="sceneTitle" placeholder="Untitled scene" aria-label="Scene title" maxlength="140" autocomplete="off">
-          <div class="editor" id="editor" contenteditable="true" spellcheck="true" data-placeholder="Begin here…" role="textbox" aria-multiline="true" aria-label="Scene text"></div>
+          <div class="ed-wrap"><div class="editor ${mode === 'screenplay' ? 'sp' : ''} ${mode === 'poetry' ? 'poem' : ''} ${mode === 'poetry' && state.project.align === 'center' ? 'poem-center' : ''}" id="editor" contenteditable="true" spellcheck="true" data-placeholder="${mode === 'poetry' ? 'First line… (Enter for a new line, Enter twice for a new stanza)' : mode === 'journal' ? 'What happened today?' : 'Begin here…'}" role="textbox" aria-multiline="true" aria-label="Scene text"></div>${mode === 'poetry' ? '<div class="syl-gutter" id="sylGutter" aria-hidden="true"></div>' : ''}</div>
           <textarea class="md-editor" id="mdEditor" spellcheck="true" hidden aria-label="Scene text (Markdown)" placeholder="Begin here… (Markdown)"></textarea>
         </article>
       </div>
@@ -271,7 +298,7 @@ function renderWorkspace() {
       <aside class="sidepanel" id="sidePanel" hidden aria-label="Side panel"></aside>
       <div class="statusbar tnum" id="statusbar">
         <button class="sprint-pill" id="sprintPill" data-act="sprint" hidden></button>
-        <span class="sb-words"><b id="sceneWords">0</b><span id="sceneTarget"></span> words</span><span class="proj-total"><span id="projWords2">0</span> in project</span><span class="saved" id="saveState"><span class="dot"></span>Saved</span>
+        <span class="sb-extra" id="sbExtra" hidden></span><span class="sb-words"><b id="sceneWords">0</b><span id="sceneTarget"></span> words</span><span class="proj-total"><span id="projWords2">0</span> in project</span><span class="saved" id="saveState"><span class="dot"></span>Saved</span>
       </div>
     </section>`;
   ws.onclick = onWorkspaceClick;
@@ -289,18 +316,21 @@ function renderWorkspace() {
 
 async function setView(v, opts = {}) {
   const save = opts.save !== false;
+  if (!$(`#viewSeg [data-view="${v}"]`)) v = 'write';
   await saveNow();
   state.view = v;
   if (save) db.setMeta('view:' + state.project.id, v);
   document.body.dataset.view = v;
   $$('#viewSeg button').forEach(b => { b.classList.toggle('on', b.dataset.view === v); b.setAttribute('aria-selected', b.dataset.view === v); });
   $('#scroller').hidden = v !== 'write';
-  $('#boardView').hidden = v !== 'board';
+  $('#boardView').hidden = !['board', 'calendar', 'timeline'].includes(v);
   $('#outlineView').hidden = v !== 'outline';
   $('#bibleView').hidden = v !== 'bible';
   if (v === 'board') renderBoard($('#boardView'));
   if (v === 'outline') renderOutline($('#outlineView'));
   if (v === 'bible') renderBible($('#bibleView'), opts.select ? { select: opts.select } : {});
+  if (v === 'calendar') renderCalendar($('#boardView'), calendarCtx());
+  if (v === 'timeline') renderTimeline($('#boardView'));
   if (v !== 'write') { revise.closePanel(); hideHover(true); }
   else refreshNames();
   if (v !== 'write' && document.body.classList.contains('focus')) setFocusMode(false);
@@ -309,6 +339,8 @@ function renderCurrentView() {
   if (state.view === 'board') renderBoard($('#boardView'));
   else if (state.view === 'outline') renderOutline($('#outlineView'));
   else if (state.view === 'bible') renderBible($('#bibleView'));
+  else if (state.view === 'calendar') renderCalendar($('#boardView'), calendarCtx());
+  else if (state.view === 'timeline') renderTimeline($('#boardView'));
 }
 
 async function saveItem(it) {
@@ -337,7 +369,9 @@ function renderProjectHead() {
   const p = state.project;
   $('#projTitle').textContent = p.title;
   const live = state.items.filter(i => !i.deleted);
-  $('#projMeta').textContent = `${live.filter(i => i.type === 'chapter').length} chapters · ${live.filter(i => i.type === 'scene').length} scenes`;
+  const tm = T(p), nc = live.filter(i => i.type === 'chapter').length, ns = live.filter(i => i.type === 'scene').length;
+  const pl = w => w === 'Entry' ? 'entries' : w.toLowerCase() + 's';
+  $('#projMeta').textContent = `${MODES[modeOf(p)].name} · ${nc} ${nc === 1 ? tm.chapter.toLowerCase() : pl(tm.chapter)} · ${ns} ${ns === 1 ? tm.scene.toLowerCase() : pl(tm.scene)}`;
   updateCounts();
 }
 
@@ -361,7 +395,7 @@ function renderBinder() {
           <span class="r-count">${num(s.words)}</span>
           <button class="r-more" data-more="${s.id}" aria-label="Scene options">${icon('more')}</button>
         </div>`).join('')}
-        ${c.id !== '__loose' ? `<button class="add-scene" data-add-scene="${c.id}">${icon('plus')}New scene</button>` : ''}
+        ${c.id !== '__loose' && modeOf(state.project) !== 'journal' ? `<button class="add-scene" data-add-scene="${c.id}">${icon('plus')}New ${T(state.project).scene.toLowerCase()}</button>` : ''}
       </div>
     </div>`).join('');
   renderProjectHead();
@@ -373,7 +407,7 @@ async function onWorkspaceClick(e) {
   const act = t.closest('[data-act]')?.dataset.act;
   const fmt = t.closest('[data-fmt]')?.dataset.fmt;
   if (fmt) return applyFormat(fmt);
-  if (act === 'library') { await saveNow(); $('#workspace').hidden = true; $('#library').hidden = false; document.body.classList.remove('binder-open'); setFocusMode(false); state.project = null; return renderLibrary(); }
+  if (act === 'library') return goLibrary();
   if (act === 'drawer') return document.body.classList.add('binder-open');
   if (act === 'theme') return toggleTheme();
   if (act === 'stats') return statsSheet();
@@ -382,6 +416,12 @@ async function onWorkspaceClick(e) {
   if (act === 'scene-status') return statusMenu(t.closest('[data-act]'));
   if (act === 'scene-details') return sceneDetails(state.scene.id);
   if (act === 'panel') return revise.togglePanel();
+  if (act === 'today') return openEntry(new Date());
+  if (act === 'poem-align') { state.project.align = state.project.align === 'center' ? null : 'center'; touch(state.project); await db.put('projects', state.project); $('#editor').classList.toggle('poem-center', state.project.align === 'center'); t.closest('[data-act]').classList.toggle('on', state.project.align === 'center'); return updateSyllables(); }
+  if (act === 'syllables') { settings.syllables = !settings.syllables; saveSettings(); t.closest('[data-act]').classList.toggle('on', settings.syllables); return updateSyllables(); }
+  if (act === 'element') return menu(t.closest('[data-act]'), sp.ELEMENTS.map(e => ({ k: e.id, icon: 'file', label: e.name, run: () => { const ed = $('#editor'); ed.focus(); sp.setElement(ed, e.id); changed(); updateElementLabel(); } })));
+  if (act === 'mood') return moodMenu(t.closest('[data-act]'));
+  if (act === 'when') return whenSheet(state.scene.id, () => updateCrumbs());
   if (act === 'more-tools') { const a = t.closest('[data-act]'); return menu(a, [
     { k: 'find', icon: 'search', label: 'Find & replace', run: openFind },
     { k: 'history', icon: 'history', label: 'Version history', run: () => { if (state.view !== 'write') setView('write').then(revise.historySheet); else revise.historySheet(); } },
@@ -391,7 +431,7 @@ async function onWorkspaceClick(e) {
     { k: 'sound', icon: 'headphones', label: 'Soundscapes', run: () => soundPanel(a) },
     { k: 'stats', icon: 'chart', label: 'Goals & stats', run: statsSheet },
     ...(matchMedia('(max-width: 860px)').matches ? [{ k: 'focus', icon: 'focus', label: 'Focus mode', run: () => setFocusMode(true) }] : []),
-    { k: 'export', icon: 'export', label: 'Export', run: exportSheet },
+    { k: 'export', icon: 'export', label: 'Compile & export', run: exportSheet },
   ]); }
   if (act === 'close-drawer') return document.body.classList.remove('binder-open');
   if (act === 'add-chapter') return addChapter();
@@ -402,6 +442,12 @@ async function onWorkspaceClick(e) {
     { k: 'edit', icon: 'edit', label: 'Project details', run: projectSheet },
     { k: 'export', icon: 'export', label: 'Export…', run: exportSheet },
     { k: 'file', icon: 'share', label: 'Share project file (.inkfold)', run: () => io.exportProjectFile(state.project.id).catch(errorToast) },
+    '-',
+    ...(state.project.enc ? [
+      { k: 'lockp', icon: 'lock', label: 'Lock project now', run: async () => { await saveNow(); sec.lockProject(state.project.id); goLibrary(); toast('Project locked'); } },
+      { k: 'pw', icon: 'edit', label: 'Change password', run: changeProjectPassword },
+      { k: 'decrypt', icon: 'unlock', label: 'Remove encryption', run: removeEncryption },
+    ] : [{ k: 'encrypt', icon: 'lock', label: 'Encrypt project…', run: encryptCurrentProject }]),
     '-',
     { k: 'del', icon: 'trash', label: 'Move project to Trash', danger: true, run: deleteProject },
   ]);
@@ -574,7 +620,8 @@ async function loadScene(id) {
   const ed = $('#editor'), md = $('#mdEditor');
   ed.hidden = isMd(); md.hidden = !isMd();
   if (isMd()) { md.value = htmlToMd(sc.content || ''); autoGrow(md); }
-  else ed.innerHTML = sc.content || '';
+  else ed.innerHTML = sc.content || (modeOf(state.project) === 'screenplay' ? '<p data-el="heading"><br></p>' : modeOf(state.project) === 'poetry' ? '<p><br></p>' : '');
+  updateSyllables(); updateElementLabel(); markEmpty();
   $$('#binderList .scene-row').forEach(r => r.classList.toggle('active', r.dataset.id === id));
   updateCrumbs(); updateCounts();
   $('#scroller').scrollTop = 0;
@@ -595,7 +642,11 @@ function updateCrumbs() {
   $('#crumbChapter').textContent = ch ? ch.title : '';
   $('#crumbScene').textContent = state.scene.title || 'Untitled scene';
   const st = statusOf(state.scene), lb = labelOf(state.scene);
-  $('#sceneKicker').innerHTML = (ch ? `<span>Chapter ${ci + 1}</span><span class="k-dot"></span><span>Scene ${si + 1}</span>${state.scene.conflictOf ? '<span class="k-dot"></span><span style="color:var(--warn)">Conflicted copy</span>' : ''}` : '')
+  const mode = modeOf(state.project), term = T(state.project), sc = state.scene;
+  const lead = mode === 'journal'
+    ? `<span>${esc(ch ? ch.title : '')}</span><span class="k-dot"></span><button class="k-mood" data-act="mood" title="How was the day?">${sc.data && sc.data.mood ? moodFace(sc.data.mood, 18) + `<span>${MOODS[sc.data.mood - 1].name}</span>` : `${icon('plus')}<span>Mood</span>`}</button>`
+    : `<span>${term.chapter} ${ci + 1}</span><span class="k-dot"></span><span>${term.scene} ${si + 1}</span>${(mode === 'novel' || mode === 'screenplay') ? `<button class="k-when" data-act="when" title="When does it happen?">${icon('clock')}<span>${esc(whenLabel(sc.when) || 'Set time')}</span></button>` : ''}`;
+  $('#sceneKicker').innerHTML = (ch ? lead + (sc.conflictOf ? '<span class="k-dot"></span><span style="color:var(--warn)">Conflicted copy</span>' : '') : '')
     + `<span class="k-spacer"></span><button class="pill st-${st.id} k-pill" data-act="scene-status" title="Change status">${st.name}</button>${lb ? `<i class="lbl-dot" style="--lbl:${lb.color}"></i>` : ''}${state.scene.pov ? `<span class="k-pov">${esc(state.scene.pov)}</span>` : ''}<button class="k-more" data-act="scene-details" title="Scene details" aria-label="Scene details">${icon('more')}</button>`;
 }
 
@@ -606,6 +657,13 @@ function updateCounts() {
   const w = state.scene ? liveWords() : 0;
   const others = state.items.filter(i => i.type === 'scene' && !i.deleted && i.id !== state.scene?.id).reduce((s, i) => s + (i.words || 0), 0);
   $('#sceneWords').textContent = num(w);
+  const mode = modeOf(state.project), extra = $('#sbExtra');
+  if (extra) {
+    if (mode === 'screenplay') { const pg = sp.pageCount(htmlToBlocks($('#editor').innerHTML)); const all = state.items.filter(i => i.type === 'scene' && !i.deleted && i.id !== state.scene?.id).reduce((s2, i) => s2 + sp.pageCount(htmlToBlocks(i.content)), 0); extra.textContent = `${pg.toFixed(1)} page${pg >= 1.05 || pg < .95 ? 's' : ''} · script ${Math.max(1, Math.round(pg + all))}`; }
+    else if (mode === 'poetry') { const lines = $('#editor').innerText.split('\n').filter(l => l.trim()).length; extra.textContent = `${lines} line${lines === 1 ? '' : 's'}`; }
+    else extra.textContent = '';
+    extra.hidden = !extra.textContent;
+  }
   const tg = state.scene && state.scene.target;
   $('#sceneTarget').textContent = tg ? ` / ${num(tg)}` : '';
   if (state.sprint && state.sprint.phase === 'write') renderSprintPill();
@@ -642,6 +700,116 @@ function changed() {
   const sc = state.scene;
   if (sc && Date.now() - (versionedAt.get(sc.id) || 0) > 30 * 60 * 1000) { versionedAt.set(sc.id, Date.now()); revise.saveVersion({ ...sc }, 'Before editing', true); }
   state.dirty = true; setSaveState(false); saveSoon(); countSoon(); refreshNamesSoon(); revise.onEditorInput();
+}
+
+async function goLibrary() {
+  await saveNow(); revise.stopSpeech(); revise.closePanel(); sp.hideSuggest();
+  $('#workspace').hidden = true; $('#library').hidden = false; document.body.classList.remove('binder-open'); setFocusMode(false);
+  state.project = null; delete document.body.dataset.mode; delete document.body.dataset.view;
+  return renderLibrary();
+}
+
+// ---------- Project encryption ----------
+async function reloadItems() {
+  state.items = await db.byProject(state.project.id);
+  if (state.scene) state.scene = state.items.find(i => i.id === state.scene.id) || state.scene;
+  renderBinder();
+}
+async function encryptCurrentProject() {
+  const p = state.project;
+  const pass = await sec.passwordSheet({ title: 'Encrypt project', sub: `“${esc(p.title)}” will be encrypted on this device with a password only you know. You’ll enter it each time you open the project.`, action: 'Encrypt', warn: true });
+  if (!pass) return;
+  await saveNow();
+  const t = toast('Encrypting…', null, 0);
+  await sec.encryptProject(p, pass);
+  await reloadItems();
+  t(); toast('Project encrypted'); haptic(10);
+}
+async function changeProjectPassword() {
+  const pass = await sec.passwordSheet({ title: 'Change password', sub: 'Choose a new password for this project.', action: 'Change password', warn: true });
+  if (!pass) return;
+  await saveNow(); await sec.changeProjectPassword(state.project, pass);
+  await reloadItems(); toast('Password changed');
+}
+async function removeEncryption() {
+  if (!(await confirmSheet({ title: 'Remove encryption?', sub: 'This project will be stored without a password on this device.', confirm: 'Remove encryption', danger: true }))) return;
+  await saveNow(); await sec.decryptProject(state.project);
+  await reloadItems(); toast('Encryption removed');
+}
+
+// ---------- Command palette ----------
+function paletteItems() {
+  const items = [];
+  const A = (label, iconName, run, keys, alt) => items.push({ group: 'Actions', label, icon: iconName, run, keys, alt });
+  const inWs = !$('#workspace').hidden && state.project;
+  if (inWs) {
+    const term = T(state.project), mode = modeOf(state.project);
+    const ch = state.items.find(i => i.id === state.scene?.parentId);
+    if (mode === 'journal') A('Write today’s entry', 'pen', () => openEntry(new Date()));
+    else if (ch) A(`New ${term.scene.toLowerCase()} in “${ch.title}”`, 'plus', () => addScene(ch.id), 'Mod+Shift+N', 'add scene');
+    if (mode !== 'journal') A(`New ${term.chapter.toLowerCase()}`, 'plus', () => addChapter(), null, 'add chapter');
+    A('Focus mode', 'focus', () => { setView('write').then(() => setFocusMode(true)); }, 'Mod+.');
+    A('Start a writing sprint', 'timer', () => sprintPanel($('.topbar [data-act="sprint"]')));
+    A('Find & replace', 'search', openFind, 'Mod+F', 'search');
+    A('Version history', 'history', () => setView('write').then(revise.historySheet), null, 'versions snapshots');
+    A('Add a margin note', 'comment', () => revise.addComment(), 'Mod+Shift+M', 'comment');
+    A('Revision tools', 'sparkle', () => setView('write').then(() => revise.openPanel('revise')), null, 'readability adverbs passive');
+    A('Read aloud', 'speaker', () => setView('write').then(revise.readAloud), null, 'listen speech');
+    A('Compile & export', 'export', exportSheet, null, 'export pdf docx epub fountain');
+    A('Soundscapes', 'headphones', () => soundPanel($('.topbar [data-act="more-tools"]')), null, 'rain music ambient');
+    A('Project details', 'edit', projectSheet, null, 'cover title author');
+    A('Back to library', 'back', goLibrary);
+    $$('#viewSeg button').forEach((b, i) => items.push({ group: 'Go to', label: b.title || b.textContent, icon: 'arrowRight', run: () => setView(b.dataset.view), keys: `Mod+Shift+${i + 1}` }));
+    buildTree(state.items).forEach((c, ci) => c.scenes.forEach((x, si) => items.push({ group: 'Scenes', label: x.title || 'Untitled', sub: `${ci + 1}.${si + 1} · ${c.title}`, icon: 'file', run: () => setView('write').then(() => loadScene(x.id)) })));
+    state.items.filter(i => KINDS[i.type] && !i.deleted && i.title).forEach(i => items.push({ group: 'Story bible', label: i.title, sub: KINDS[i.type].one, icon: KINDS[i.type].icon, run: () => setView('bible', { select: i.id }) }));
+  } else {
+    A('New project', 'plus', newProjectSheet);
+    A('Import a file', 'upload', pickFile, null, 'docx markdown fountain');
+    A('Back up now', 'shield', doBackup);
+    A('Nearby Sync', 'sync', syncSheet);
+  }
+  A('Goals & stats', 'chart', statsSheet, null, 'streak heatmap');
+  A(isDark() ? 'Switch to Paper (light)' : 'Switch to dark theme', isDark() ? 'sun' : 'moon', toggleTheme, null, 'theme dark light');
+  A('Settings', 'settings', settingsSheet);
+  A('Keyboard shortcuts', 'keyboard', shortcutsSheet, 'Mod+/');
+  if (sec.lockEnabled()) A('Lock Inkfold', 'lock', () => sec.lockNow(), 'Mod+Shift+L');
+  (state.projects || []).filter(p => !inWs || p.id !== state.project.id).forEach(p => items.push({ group: 'Projects', label: p.title, sub: MODES[modeOf(p)].name, icon: 'book', run: () => (inWs ? goLibrary().then(() => openProject(p.id)) : openProject(p.id)) }));
+  return items;
+}
+
+// ---------- Mode helpers ----------
+function calendarCtx() { return { state, openEntry }; }
+async function openEntry(date) {
+  const r = entryFor(state.items, state.project.id, date, { chapter: newChapter, scene: newScene });
+  if (r.created) { r.newItems.forEach(touch); await db.writeBatch({ items: r.newItems }); state.items.push(...r.newItems); renderBinder(); }
+  if (state.view !== 'write') await setView('write');
+  await loadScene(r.scene.id);
+  document.body.classList.remove('binder-open');
+  $('#editor').focus();
+}
+function moodMenu(anchor) {
+  menu(anchor, [...MOODS.map(m => ({ k: 'm' + m.v, icon: 'user', label: m.name, run: async () => { state.scene.data = { ...(state.scene.data || {}), mood: m.v }; await saveItem(state.scene); updateCrumbs(); } })), '-', { k: 'none', icon: 'x', label: 'No mood', run: async () => { if (state.scene.data) delete state.scene.data.mood; await saveItem(state.scene); updateCrumbs(); } }]);
+  $$('.pop .mi').forEach((b, i) => { if (i < MOODS.length) b.querySelector('svg').outerHTML = moodFace(MOODS[i].v, 18); });
+}
+let sylRaf = 0;
+function updateSyllables() {
+  const g = $('#sylGutter'); if (!g) return;
+  cancelAnimationFrame(sylRaf);
+  sylRaf = requestAnimationFrame(() => { if (!settings.syllables) { g.innerHTML = ''; g.hidden = true; return; } g.hidden = false; renderSyllables($('#editor'), g); });
+}
+function markEmpty() {
+  if (modeOf(state.project) !== 'screenplay') return;
+  $$('#editor > p').forEach(p => p.classList.toggle('e', !p.textContent.trim()));
+}
+function updateElementLabel() {
+  const n = $('#elName'); if (!n) return;
+  const b = sp.blockOf($('#editor'));
+  n.textContent = sp.elName(b ? b.dataset.el || 'action' : 'action');
+}
+document.addEventListener('selectionchange', () => { if (document.activeElement && document.activeElement.id === 'editor' && modeOf(state.project) === 'screenplay') updateElementLabel(); });
+function bibleCharacterNames() { return state.items.filter(i => i.type === 'character' && !i.deleted && i.title).map(i => i.title.split(/\s+/)[0]); }
+function scriptBlocks() {
+  return state.items.filter(i => i.type === 'scene' && !i.deleted && i.id !== state.scene?.id).flatMap(i => htmlToBlocks(i.content)).concat(htmlToBlocks($('#editor').innerHTML)).map(b => ({ el: b.el, text: (b.runs || []).map(r => r.text).join('') }));
 }
 
 // ---------- Goals, celebrations ----------
@@ -767,7 +935,19 @@ function bindEditor() {
   const ed = $('#editor'), md = $('#mdEditor'), title = $('#sceneTitle');
   ed.addEventListener('beforeinput', smartPunct);
   md.addEventListener('beforeinput', smartPunct);
-  ed.addEventListener('input', e => { markdownShortcuts(e); changed(); markTyping(); requestAnimationFrame(centerCaret); });
+  ed.addEventListener('keydown', e => {
+    const mode = modeOf(state.project);
+    if (mode === 'screenplay' && sp.handleKey(e, ed, () => { changed(); updateElementLabel(); markEmpty(); })) { e.stopImmediatePropagation(); requestAnimationFrame(centerCaret); return; }
+    if (mode === 'poetry' && poetryEnter(e, ed)) { e.stopImmediatePropagation(); changed(); updateSyllables(); requestAnimationFrame(centerCaret); }
+  });
+  ed.addEventListener('input', e => {
+    const mode = modeOf(state.project);
+    if (mode === 'screenplay') { sp.suggest(ed, scriptBlocks(), bibleCharacterNames()); updateElementLabel(); markEmpty(); }
+    else if (mode !== 'poetry') markdownShortcuts(e);
+    if (mode === 'poetry') updateSyllables();
+    changed(); markTyping(); requestAnimationFrame(centerCaret);
+  });
+  ed.addEventListener('blur', () => sp.hideSuggest());
   md.addEventListener('input', () => { autoGrow(md); changed(); markTyping(); });
   title.addEventListener('input', () => { changed(); $('#crumbScene').textContent = title.value || 'Untitled scene'; });
   title.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); (isMd() ? md : ed).focus(); } });
@@ -867,7 +1047,16 @@ function setFocusMode(on) {
 
 document.addEventListener('keydown', e => {
   const mod = e.ctrlKey || e.metaKey;
-  if (!mod || $('#workspace').hidden) return;
+  if (!mod || sec.isLocked()) return;
+  const k = e.key.toLowerCase();
+  if (k === 'k' && !e.shiftKey) { e.preventDefault(); return openPalette(paletteItems); }
+  if (e.key === '/' || e.code === 'Slash') { e.preventDefault(); return shortcutsSheet(); }
+  if (k === 'l' && e.shiftKey) { e.preventDefault(); if (sec.lockEnabled()) sec.lockNow(); else toast('Set a PIN in Settings to use app lock'); return; }
+  if ($('#workspace').hidden) return;
+  if (e.shiftKey && /^Digit[1-5]$/.test(e.code)) { e.preventDefault(); const views = $$('#viewSeg button').map(b => b.dataset.view); const v = views[+e.code.slice(5) - 1]; if (v) setView(v); return; }
+  if (e.altKey && /^Digit[1-7]$/.test(e.code) && modeOf(state.project) === 'screenplay') { e.preventDefault(); const ed = $('#editor'); sp.setElement(ed, sp.ELEMENTS[+e.code.slice(5) - 1].id); changed(); updateElementLabel(); return; }
+  if (e.shiftKey && k === 'n') { e.preventDefault(); const ch = state.items.find(i => i.id === state.scene?.parentId); if (ch) addScene(ch.id); return; }
+  if (e.shiftKey && k === 'm') { e.preventDefault(); revise.addComment(); return; }
   if (e.key === 's') { e.preventDefault(); state.dirty = true; saveNow().then(() => toast('Saved', null, 1400)); }
   if (e.key === '.') { e.preventDefault(); setFocusMode(!document.body.classList.contains('focus')); }
   if (e.key === 'f' && !e.shiftKey) { e.preventDefault(); openFind(); }
@@ -930,6 +1119,7 @@ function projectSheet() {
         <div class="field"><label class="field-label" for="pd-target">Word target</label><input class="input tnum" id="pd-target" type="number" min="0" step="1000" value="${p.target || ''}" placeholder="e.g. 80000"></div>
         <div class="field"><label class="field-label" for="pd-deadline">Deadline</label><input class="input tnum" id="pd-deadline" type="date" value="${p.deadline || ''}"></div>
       </div>
+      <div class="field"><span class="field-label">Type of project</span><div class="seg" id="pd-mode">${Object.entries(MODES).map(([k, m]) => `<button data-v="${k}" class="${modeOf(p) === k ? 'on' : ''}">${m.name}</button>`).join('')}</div></div>
       <div class="field"><span class="field-label">Editor</span><div class="seg" id="pd-format"><button data-v="rich" class="${format === 'rich' ? 'on' : ''}">Rich text</button><button data-v="markdown" class="${format === 'markdown' ? 'on' : ''}">Markdown</button></div><span class="note" style="text-align:left">Rich text supports Markdown shortcuts too. Switching keeps your formatting.</span></div>`,
     foot: `<button class="btn btn-ghost" data-c>Cancel</button><button class="btn btn-primary" data-save>Save</button>`
   });
@@ -942,6 +1132,8 @@ function projectSheet() {
   };
   $('#pd-remove', s.wrap).onclick = () => { coverImage = null; thumb(); };
   thumb();
+  let pmode = modeOf(p);
+  $$('#pd-mode button', s.wrap).forEach(b => b.onclick = () => { pmode = b.dataset.v; $$('#pd-mode button', s.wrap).forEach(x => x.classList.toggle('on', x === b)); });
   $$('#pd-format button', s.wrap).forEach(b => b.onclick = () => { format = b.dataset.v; $$('#pd-format button', s.wrap).forEach(x => x.classList.toggle('on', x === b)); });
   $('[data-c]', s.wrap).onclick = s.close;
   $('[data-save]', s.wrap).onclick = async () => {
@@ -949,45 +1141,18 @@ function projectSheet() {
     Object.assign(p, { title: $('#pd-title').value.trim() || 'Untitled project', subtitle: $('#pd-sub').value.trim(), author: $('#pd-author').value.trim(), cover, format, coverImage, target: parseInt($('#pd-target').value, 10) || null, deadline: $('#pd-deadline').value || null });
     if (p.sample) p.sample = false;
     touch(p); await db.put('projects', p);
+    const modeChanged = pmode !== modeOf(p);
+    if (modeChanged) { p.mode = pmode; if (pmode !== 'novel') p.format = 'rich'; touch(p); await db.put('projects', p); }
     s.close(); renderProjectHead(); renderGoalStrip();
-    if (state.scene) await loadScene(state.scene.id);
+    if (modeChanged) { const id = state.scene && state.scene.id; renderWorkspace(); if (id) await loadScene(id); await setView('write'); }
+    else if (state.scene) await loadScene(state.scene.id);
     toast('Project updated');
   };
 }
 
 // ---------- Export ----------
 function exportSheet() {
-  let fmt = 'docx';
-  const opts = { sceneTitles: false, pageSize: 'a4' };
-  const formats = [
-    ['docx', 'Word document', 'For editors, agents and Google Docs', '.docx'],
-    ['pdf', 'PDF', 'Typeset, ready to read or print', '.pdf'],
-    ['md', 'Markdown', 'Plain text with formatting marks', '.md'],
-    ['inkfold', 'Inkfold project', 'Move this project to another device', '.inkfold'],
-  ];
-  const s = sheet({
-    title: 'Export', sub: `Export “${esc(state.project.title)}” as a file you can share, submit or print.`,
-    body: `<div class="formats">${formats.map(([k, t, d, e]) => `<button class="fmt-card ${k === fmt ? 'on' : ''}" data-f="${k}"><span class="ext">${e}</span><b>${t}</b><span>${d}</span></button>`).join('')}</div>
-      <div class="group" id="ex-opts">
-        ${`<div class="toggle-row"><div class="t-text"><b>Include scene titles</b><span>Otherwise scenes are separated by * * *</span></div><button class="switch" role="switch" aria-checked="false" id="ex-titles" aria-label="Include scene titles"></button></div>`}
-        <div class="field" id="ex-page"><span class="field-label">Page size</span><div class="seg"><button data-p="a4" class="on">A4</button><button data-p="letter">US Letter</button></div></div>
-      </div>`,
-    foot: `<button class="btn btn-ghost" data-c>Cancel</button><button class="btn btn-primary" data-go>${icon('download')}Export</button>`
-  });
-  const refresh = () => { $('#ex-opts').hidden = fmt === 'inkfold'; $('#ex-page').hidden = fmt !== 'pdf'; };
-  $$('.fmt-card', s.wrap).forEach(b => b.onclick = () => { fmt = b.dataset.f; $$('.fmt-card', s.wrap).forEach(x => x.classList.toggle('on', x === b)); refresh(); });
-  $('#ex-titles').onclick = e => { opts.sceneTitles = !opts.sceneTitles; e.currentTarget.setAttribute('aria-checked', opts.sceneTitles); };
-  $$('#ex-page button', s.wrap).forEach(b => b.onclick = () => { opts.pageSize = b.dataset.p; $$('#ex-page button', s.wrap).forEach(x => x.classList.toggle('on', x === b)); });
-  $('[data-c]', s.wrap).onclick = s.close;
-  $('[data-go]', s.wrap).onclick = async e => {
-    const btn = e.currentTarget; btn.disabled = true; btn.innerHTML = '<span class="spinner"></span>Preparing…';
-    try {
-      await saveNow();
-      const r = fmt === 'inkfold' ? await io.exportProjectFile(state.project.id) : await io.exportProject(state.project.id, fmt, opts);
-      s.close(); if (r !== 'cancelled') toast(r === 'shared' ? 'Exported' : 'Export saved to your downloads');
-    } catch (err) { errorToast(err); btn.disabled = false; btn.innerHTML = `${icon('download')}Export`; }
-  };
-  refresh();
+  compileSheet({ state, saveNow, saveProject: async () => { touch(state.project); await db.put('projects', state.project); } });
 }
 
 // ---------- Scene status ----------
@@ -1261,6 +1426,11 @@ async function importFile(file) {
       const p = await io.importProjectData(data, mode);
       toast(`Imported “${p.title}”`); return openProject(p.id);
     }
+    if (ext === 'fountain' || ext === 'spmd') {
+      const { meta, chapters } = sp.parseFountain(await file.text());
+      const p = await createProjectFrom(meta.title || file.name.replace(/\.[^.]+$/, ''), chapters, { mode: 'screenplay', author: meta.author || meta.authors || '' });
+      toast(`Imported “${p.title}”`); return openProject(p.id);
+    }
     const p = await io.importDocument(file);
     toast(`Imported “${p.title}”`); openProject(p.id);
   } catch (e) { errorToast(e); }
@@ -1309,8 +1479,17 @@ async function settingsSheet(focus) {
 
   const s = sheet({ title: 'Settings', wide: true, foot: null, body: `
     <div class="group"><div class="group-title">Appearance</div>
-      <div class="seg" id="st-theme">${[['system', 'Match device'], ['dark', 'Ink'], ['light', 'Paper']].map(([k, l]) => `<button data-v="${k}" class="${settings.theme === k ? 'on' : ''}">${l}</button>`).join('')}</div>
+      <div class="theme-picks" id="st-theme">${THEMES.map(([k, l, a, b, c]) => `<button data-v="${k}" class="theme-pick ${settings.theme === k ? 'on' : ''}"><span class="tp-sw" style="--a:${a};--b:${b};--c:${c}">${k === 'system' ? '<i class="half"></i>' : '<i></i><i></i>'}</span><b>${l}</b></button>`).join('')}</div>
     </div>
+    <div class="group"><div class="group-title">Privacy</div>
+      <div class="card-list">
+        <div class="li"><div class="li-icon">${icon('lock')}</div><div class="li-text"><b>App lock</b><span>${sec.lockEnabled() ? 'Inkfold asks for your PIN when it opens' : 'Ask for a PIN when Inkfold opens'}</span></div><button class="switch" role="switch" aria-checked="${sec.lockEnabled()}" data-a="lock-toggle" aria-label="App lock"></button></div>
+        ${sec.lockEnabled() ? `<div class="li"><div class="li-icon">${icon('clock')}</div><div class="li-text"><b>Lock automatically</b><span>After this long without use, or away from the app</span></div><select class="input sel-sm" id="st-lockt">${[[0, 'Immediately'], [1, '1 minute'], [5, '5 minutes'], [15, '15 minutes'], [60, '1 hour']].map(([v, l]) => `<option value="${v}" ${sec.lockTimeout() === v ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
+        <div class="li"><div class="li-icon">${icon('keyboard')}</div><div class="li-text"><b>Change PIN</b></div><button class="btn btn-quiet btn-sm" data-a="pin-change">Change</button><button class="btn btn-ghost btn-sm" data-a="lock-now">Lock now</button></div>` : ''}
+        <div class="li"><div class="li-icon">${icon('shield')}</div><div class="li-text"><b>Encrypted projects</b><span>Open a project, then choose Encrypt project from its ••• menu</span></div></div>
+      </div>
+    </div>
+    <div class="group"><div class="group-title">Shortcuts</div><div class="card-list"><div class="li"><div class="li-icon">${icon('command')}</div><div class="li-text"><b>Command palette</b><span>Press ${navigator.platform.includes('Mac') ? '⌘' : 'Ctrl'} + K anywhere to jump to anything</span></div><button class="btn btn-quiet btn-sm" data-a="shortcuts">All shortcuts</button></div></div></div>
     <div class="group" id="st-data"><div class="group-title">Keep your writing safe</div>
       <div class="card-list">
         <div class="li"><div class="li-icon">${icon('shield')}</div><div class="li-text"><b>${lastBackup ? 'Last backup ' + ago(lastBackup.at) : 'No backups yet'}</b><span>${lastBackup?.where === 'folder' ? 'Saved to your backup folder' : 'A ZIP of every project, to keep anywhere'}</span></div><button class="btn btn-primary btn-sm" data-a="backup">Back up now</button></div>
@@ -1335,7 +1514,8 @@ async function settingsSheet(focus) {
     <p class="note">Inkfold ${VERSION} · Everything is stored on this device. No accounts, no tracking.</p>` });
 
   if (focus === 'data') setTimeout(() => $('#st-data', s.wrap).scrollIntoView({ block: 'start' }), 80);
-  $$('#st-theme button', s.wrap).forEach(b => b.onclick = () => { settings.theme = b.dataset.v; $$('#st-theme button', s.wrap).forEach(x => x.classList.toggle('on', x === b)); saveSettings(); });
+  $$('#st-theme button', s.wrap).forEach(b => b.onclick = () => { document.documentElement.classList.add('theme-fade'); settings.theme = b.dataset.v; if (DARK_THEMES.includes(settings.theme)) settings.darkTheme = settings.theme; $$('#st-theme button', s.wrap).forEach(x => x.classList.toggle('on', x === b)); saveSettings(); setTimeout(() => document.documentElement.classList.remove('theme-fade'), 500); });
+  const lt = $('#st-lockt', s.wrap); if (lt) lt.onchange = () => sec.setLockTimeout(+lt.value);
   $('#st-name', s.wrap).onchange = async e => { state.device.name = e.target.value.trim() || state.device.name; await db.setMeta('deviceName', state.device.name); };
   s.body.onclick = async e => {
     const a = e.target.closest('[data-a]')?.dataset.a;
@@ -1345,6 +1525,14 @@ async function settingsSheet(focus) {
       else if (a === 'folder') { const d = await io.chooseBackupFolder(); toast(`Backups will be saved to “${d.name}”`); s.close(); settingsSheet('data'); }
       else if (a === 'persist') { const ok = await navigator.storage?.persist?.(); toast(ok ? 'Storage protected' : 'Your browser decides this. Installing Inkfold usually turns it on.'); s.close(); settingsSheet('data'); }
       else if (a === 'install') { s.close(); installApp(); }
+      else if (a === 'lock-toggle') {
+        if (sec.lockEnabled()) { if (await confirmSheet({ title: 'Turn off app lock?', sub: 'Inkfold will open without asking for your PIN.', confirm: 'Turn off' })) { await sec.removePin(); toast('App lock is off'); } }
+        else { const pin = await sec.pinSetupSheet(); if (pin) { await sec.setPin(pin, 5); toast('App lock is on'); } }
+        s.close(); settingsSheet();
+      }
+      else if (a === 'pin-change') { const pin = await sec.pinSetupSheet(); if (pin) { await sec.setPin(pin); toast('PIN changed'); } }
+      else if (a === 'lock-now') { s.close(); sec.lockNow(); }
+      else if (a === 'shortcuts') { shortcutsSheet(); }
     } catch (err) { if (err.name !== 'AbortError') errorToast(err); }
     const snap = e.target.closest('[data-snap]');
     if (snap) {
@@ -1563,8 +1751,8 @@ async function boot() {
     settings = { ...DEFAULTS, ...(await db.meta('settings', {})) };
     if (!settings.themeV2) { if (settings.theme === 'system') settings.theme = 'light'; settings.themeV2 = true; await db.setMeta('settings', settings); }
     applySettings();
-    const openEntry = id => setView('bible', { select: id });
-    initBible({ state, saveItem, openEntry,
+    const openBibleEntry = id => setView('bible', { select: id });
+    initBible({ state, saveItem, openEntry: openBibleEntry,
       openScene: async id => { await setView('write'); await loadScene(id); },
       findInScene: async (id, terms) => { await setView('write'); await loadScene(id); setTimeout(() => revise.highlightFind(nameRegex(terms), true), 60); },
       onChange: () => { refreshNamesSoon(); } });
@@ -1574,7 +1762,14 @@ async function boot() {
       markChanged: () => changed(),
       onChange: () => { renderBinder(); updateCrumbs(); } });
     initBoard({ state, saveItem, openScene: async id => { await setView('write'); await loadScene(id); }, addScene, addChapter,
+      whenField: it => ['novel', 'screenplay'].includes(modeOf(state.project)) ? whenLabel(it.when) : null, whenSheet: id => whenSheet(id, () => renderCurrentView()),
       onChange: (o = {}) => { renderBinder(); updateCrumbs(); updateCounts(); if (!o.skipView) renderCurrentView(); } });
+    initTimeline({ state, saveItem, openScene: async id => { await setView('write'); await loadScene(id); }, onChange: (o = {}) => { renderBinder(); updateCrumbs(); if (!o.skipView) renderCurrentView(); } });
+    await sec.registerProjects();
+    await sec.initLock({
+      beforeLock: async () => { await saveNow(); while (sheets.length) sheets[sheets.length - 1].close(); closePop(); closePalette(); revise.stopSpeech(); if (state.project && state.project.enc) await goLibrary(); },
+      afterUnlock: () => { if (!$('#library').hidden) renderLibrary(); },
+    });
     state.device = await deviceInfo();
     if (!(await db.meta('seeded'))) { await seedSample(); await db.setMeta('seeded', true); }
     if (!(await db.meta('askedPersist'))) { await db.setMeta('askedPersist', true); navigator.storage?.persist?.().catch(() => {}); }
@@ -1585,7 +1780,7 @@ async function boot() {
     console.error(e);
     document.body.innerHTML = `<div style="padding:40px;font-family:system-ui;max-width:520px;margin:auto"><h2>Inkfold couldn’t open its storage</h2><p>This browser may be blocking site storage (private browsing does this). Open Inkfold in a normal window.</p></div>`;
   } finally {
-    const sp = $('#splash'); if (sp) { sp.classList.add('gone'); setTimeout(() => sp.remove(), 600); }
+    const splash = $('#splash'); if (splash) { splash.classList.add('gone'); setTimeout(() => splash.remove(), 600); }
   }
   registerSW();
 }

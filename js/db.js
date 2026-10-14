@@ -47,21 +47,31 @@ async function tx(stores, mode, fn) {
   });
 }
 
+// Optional record hooks (used for per-project encryption). Raw reads (dump/backup/sync) bypass them.
+let hooks = { write: null, read: null };
+export function setHooks(h) { hooks = { ...hooks, ...h }; }
+const wr = async (store, v) => hooks.write ? hooks.write(store, v) : v;
+const rd = async (store, v) => (hooks.read && v) ? hooks.read(store, v) : v;
+const rdAll = async (store, arr) => hooks.read ? Promise.all(arr.map(v => hooks.read(store, v))) : arr;
+
 export const db = {
-  async get(store, key) { return tx([store], 'readonly', t => wrap(t.objectStore(store).get(key))); },
-  async all(store) { return tx([store], 'readonly', t => wrap(t.objectStore(store).getAll())); },
+  async get(store, key) { return rd(store, await tx([store], 'readonly', t => wrap(t.objectStore(store).get(key)))); },
+  async all(store) { return rdAll(store, await this.rawAll(store)); },
+  async rawAll(store) { return tx([store], 'readonly', t => wrap(t.objectStore(store).getAll())); },
   async put(store, value, key) {
+    value = await wr(store, value);
     return tx([store], 'readwrite', t => wrap(key === undefined ? t.objectStore(store).put(value) : t.objectStore(store).put(value, key)));
   },
   async putMany(store, values) {
+    values = await Promise.all(values.map(v => wr(store, v)));
     return tx([store], 'readwrite', t => { const s = t.objectStore(store); values.forEach(v => s.put(v)); });
   },
   async del(store, key) { return tx([store], 'readwrite', t => wrap(t.objectStore(store).delete(key))); },
   async versionsOf(sceneId) {
-    return tx(['versions'], 'readonly', t => wrap(t.objectStore('versions').index('sceneId').getAll(sceneId)));
+    return rdAll('versions', await tx(['versions'], 'readonly', t => wrap(t.objectStore('versions').index('sceneId').getAll(sceneId))));
   },
   async byProject(projectId) {
-    return tx(['items'], 'readonly', t => wrap(t.objectStore('items').index('projectId').getAll(projectId)));
+    return rdAll('items', await tx(['items'], 'readonly', t => wrap(t.objectStore('items').index('projectId').getAll(projectId))));
   },
   async meta(key, fallback = null) {
     const v = await this.get('meta', key);
@@ -71,7 +81,7 @@ export const db = {
 
   // Full library dump (used for backups, snapshots and sync)
   async dump() {
-    const [projects, items, tombstones, log] = await Promise.all([this.all('projects'), this.all('items'), this.all('tombstones'), this.all('log')]);
+    const [projects, items, tombstones, log] = await Promise.all([this.rawAll('projects'), this.rawAll('items'), this.rawAll('tombstones'), this.rawAll('log')]);
     return { format: 'inkfold-library', version: 1, exportedAt: Date.now(), projects, items, tombstones, log };
   },
   // Replace everything with a dump
@@ -85,6 +95,7 @@ export const db = {
     });
   },
   async writeBatch({ projects = [], items = [], tombstones = [], deleteItems = [], deleteProjects = [], log = [] }) {
+    items = await Promise.all(items.map(i => wr('items', i)));
     return tx(['projects', 'items', 'tombstones', 'log'], 'readwrite', t => {
       log.forEach(l => t.objectStore('log').put(l));
       projects.forEach(p => t.objectStore('projects').put(p));

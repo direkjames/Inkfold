@@ -51,7 +51,8 @@ export function htmlToBlocks(html) {
     else if (/^H[3-6]$/.test(tag)) type = 'h3';
     else if (tag === 'LI') type = ctx.list || 'ul';
     else if (ctx.quote) type = 'quote';
-    startBlock(type);
+    const blk = startBlock(type);
+    if (node.dataset && node.dataset.el) blk.el = node.dataset.el.replace(/[^a-z]/g, '');
     node.childNodes.forEach(c => walk(c, next));
     end();
   }
@@ -62,8 +63,10 @@ export function htmlToBlocks(html) {
     if (b.type === 'hr') return b;
     const runs = b.runs.filter(r => r.text.length);
     if (runs.length) { runs[0].text = runs[0].text.replace(/^ +/, ''); const l = runs[runs.length - 1]; l.text = l.text.replace(/[ \n]+$/, ''); }
-    return { type: b.type, runs: runs.filter(r => r.text.length) };
-  }).filter(b => b.type === 'hr' || b.runs.length);
+    const out = { type: b.type, runs: runs.filter(r => r.text.length) };
+    if (b.el) out.el = b.el;
+    return out;
+  }).filter(b => b.type === 'hr' || b.runs.length || b.el);
 }
 
 const esc = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -92,7 +95,7 @@ export function blocksToHtml(blocks) {
       continue;
     }
     if (b.type === 'quote') { out += `<blockquote><p>${runsToHtml(b.runs)}</p></blockquote>`; continue; }
-    out += `<${b.type}>${runsToHtml(b.runs)}</${b.type}>`;
+    out += `<${b.type}${b.el ? ` data-el="${b.el}"` : ''}>${runsToHtml(b.runs)}</${b.type}>`;
   }
   return out;
 }

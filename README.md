@@ -1,6 +1,6 @@
 # Inkfold
 
-A private, offline writing studio that runs in the browser. Phases 1, 2 and 3.
+A private, offline writing studio that runs in the browser. Phases 1 to 4.
 
 ## Put it on GitHub Pages
 
@@ -59,6 +59,21 @@ Writing stats are included in backups and Nearby Sync, so they add up across you
 - Reference pane: keep another scene or a character profile open beside the one you're writing
 - Shortcuts: Ctrl/Cmd + F opens Find & replace
 
+## What's new in Phase 4
+
+- Four kinds of project, picked when you create one (and changeable in Project details):
+  - **Novel**: chapters and scenes
+  - **Screenplay**: scene headings, action, character, parentheticals, dialogue, transitions. Tab switches element, Enter picks the element that usually follows, and character names, locations and times autocomplete. Page count in the status bar. Import `.fountain` files.
+  - **Poetry**: Enter for a new line, Enter twice for a new stanza, syllable counts beside each line, optional centred layout
+  - **Journal**: one entry a day filed by month, a mood for each day, and a calendar view
+- Timeline (novels and screenplays): give scenes a date, a day number or a time, see them in story order with one lane per point of view, spot flashbacks, or switch to reading order
+- Compile: Word, PDF, EPUB, Markdown, and for screenplays Fountain, Final Draft (.fdx) and an industry-format PDF. Looks: Standard manuscript (header, word count, contact details), Book, Reading copy, or Custom (typeface, size, spacing, chapter headings, scene breaks). Choose exactly which chapters and scenes go in.
+- App lock: a PIN when Inkfold opens, auto-lock after a set time, Ctrl/Cmd + Shift + L to lock now
+- Encrypted projects: AES-256 encryption with a password only you know. Backups and sync carry the encrypted data; the password never leaves your head.
+- Command palette (Ctrl/Cmd + K) to jump to any scene, character, view or action, and a shortcuts sheet (Ctrl/Cmd + /)
+- Editor themes: Paper, Ink, Midnight, Sepia Night, OLED Black, or match your device
+- Better tablet layouts
+
 ## Files
 
 | File | What it does |
@@ -73,6 +88,12 @@ Writing stats are included in backups and Nearby Sync, so they add up across you
 | `js/bible.js` | Story bible, links, mentions, hover cards, relationship editor |
 | `js/relmap.js` | Relationship web and family tree |
 | `js/revise.js` | Notes, revision rounds, analysis, find & replace, versions, read aloud, reference |
+| `js/modes.js` | Novel, poetry and journal behaviour, calendar |
+| `js/screenplay.js` | Screenplay editor, Fountain, Final Draft, screenplay PDF |
+| `js/timeline.js` | Timeline view |
+| `js/compile.js` | Compile templates, DOCX, PDF, EPUB |
+| `js/security.js` | App lock and project encryption |
+| `js/palette.js` | Command palette and shortcuts |
 | `js/board.js` | Corkboard, outliner, scene details |
 | `js/stats.js` | Writing log, goals, streaks, deadline planner |
 | `js/sound.js` | Ambient soundscapes and timer chime |

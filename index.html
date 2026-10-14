@@ -15,11 +15,11 @@
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500&family=Instrument+Serif:ital@0;1&family=Literata:ital,opsz,wght@0,7..72,400;0,7..72,600;1,7..72,400&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,600;1,6..72,400&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&display=swap">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500&family=Courier+Prime:ital,wght@0,400;0,700;1,400&family=Instrument+Serif:ital@0;1&family=Literata:ital,opsz,wght@0,7..72,400;0,7..72,600;1,7..72,400&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,600;1,6..72,400&family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;1,8..60,400&display=swap">
   <link rel="stylesheet" href="styles.css">
   <script>
     // Apply the saved theme before first paint (no flash)
-    try { const t = localStorage.getItem('inkfold-theme'); document.documentElement.dataset.theme = t === 'dark' ? 'dark' : t === 'system' ? (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light') : 'light'; } catch (e) { document.documentElement.dataset.theme = 'light'; }
+    try { const t = localStorage.getItem('inkfold-theme'); document.documentElement.dataset.theme = ['dark', 'midnight', 'sepia', 'oled'].includes(t) ? t : t === 'system' ? (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light') : 'light'; } catch (e) { document.documentElement.dataset.theme = 'light'; }
   </script>
 </head>
 <body>
@@ -31,7 +31,7 @@
   <div id="workspace" class="view" hidden></div>
 
   <div class="toasts" id="toasts" role="status" aria-live="polite"></div>
-  <input type="file" id="fileInput" hidden accept=".docx,.md,.markdown,.txt,.inkfold,.zip,application/json,text/plain,text/markdown,application/zip,application/vnd.openxmlformats-officedocument.wordprocessingml.document">
+  <input type="file" id="fileInput" hidden accept=".docx,.md,.markdown,.txt,.inkfold,.zip,.fountain,application/json,text/plain,text/markdown,application/zip,application/vnd.openxmlformats-officedocument.wordprocessingml.document">
 
   <script type="module" src="js/app.js"></script>
 </body>
