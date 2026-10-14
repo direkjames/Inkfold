@@ -1,7 +1,7 @@
 // Inkfold — local storage layer (IndexedDB). Everything stays on this device.
 const DB_NAME = 'inkfold';
-const DB_VERSION = 2;
-const STORES = ['projects', 'items', 'meta', 'snapshots', 'tombstones', 'log'];
+const DB_VERSION = 3;
+const STORES = ['projects', 'items', 'meta', 'snapshots', 'tombstones', 'log', 'versions'];
 
 let dbp = null;
 
@@ -19,6 +19,7 @@ function open() {
       if (!db.objectStoreNames.contains('meta')) db.createObjectStore('meta');
       if (!db.objectStoreNames.contains('snapshots')) db.createObjectStore('snapshots', { keyPath: 'id' });
       if (!db.objectStoreNames.contains('tombstones')) db.createObjectStore('tombstones', { keyPath: 'id' });
+      if (!db.objectStoreNames.contains('versions')) { const v = db.createObjectStore('versions', { keyPath: 'id' }); v.createIndex('sceneId', 'sceneId'); } // scene history (this device)
       if (!db.objectStoreNames.contains('log')) db.createObjectStore('log', { keyPath: 'id' }); // daily writing log (this device)
     };
     req.onsuccess = () => resolve(req.result);
@@ -56,6 +57,9 @@ export const db = {
     return tx([store], 'readwrite', t => { const s = t.objectStore(store); values.forEach(v => s.put(v)); });
   },
   async del(store, key) { return tx([store], 'readwrite', t => wrap(t.objectStore(store).delete(key))); },
+  async versionsOf(sceneId) {
+    return tx(['versions'], 'readonly', t => wrap(t.objectStore('versions').index('sceneId').getAll(sceneId)));
+  },
   async byProject(projectId) {
     return tx(['items'], 'readonly', t => wrap(t.objectStore('items').index('projectId').getAll(projectId)));
   },

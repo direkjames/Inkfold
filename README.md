@@ -1,6 +1,6 @@
 # Inkfold
 
-A private, offline writing studio that runs in the browser. Phases 1 and 2.
+A private, offline writing studio that runs in the browser. Phases 1, 2 and 3.
 
 ## Put it on GitHub Pages
 
@@ -43,6 +43,22 @@ Open it once while online. After that it works fully offline.
 
 Writing stats are included in backups and Nearby Sync, so they add up across your devices.
 
+## What's new in Phase 3
+
+- Story bible (Bible tab): characters, places and lore with photos, roles, traits, wants and needs, arcs and notes
+- `[[Links]]` between entries, with suggestions as you type, plus "Appears in" (every scene that mentions a name) and "Linked from"
+- Hover a character or place name in your manuscript to see their card
+- Relationship map with two views: a draggable web of everyone, and a family tree built from Parent, Married and Sibling relationships
+- Ten relationship types (family, love, friendship, alliance, mentorship, work, rivalry, enmity), each with its own colour
+- Margin notes pinned to the words you select, with resolve and reopen
+- Revision rounds: new writing is coloured by draft round, with "accept all"
+- Version history for every scene: automatic versions before each editing session, named versions, and a side-by-side comparison with restore
+- Find & replace across the whole project (match case, whole words, regular expressions)
+- Revise panel: readability score, adverbs, passive voice, repeated words, long sentences, dialogue-only view, most used words, and a name check against your story bible
+- Read aloud with sentence highlighting, speed and voice
+- Reference pane: keep another scene or a character profile open beside the one you're writing
+- Shortcuts: Ctrl/Cmd + F opens Find & replace
+
 ## Files
 
 | File | What it does |
@@ -54,6 +70,9 @@ Writing stats are included in backups and Nearby Sync, so they add up across you
 | `js/text.js` | Rich text, Markdown and word counting |
 | `js/io.js` | Backups, import and export |
 | `js/sync.js` | Nearby Sync and merging |
+| `js/bible.js` | Story bible, links, mentions, hover cards, relationship editor |
+| `js/relmap.js` | Relationship web and family tree |
+| `js/revise.js` | Notes, revision rounds, analysis, find & replace, versions, read aloud, reference |
 | `js/board.js` | Corkboard, outliner, scene details |
 | `js/stats.js` | Writing log, goals, streaks, deadline planner |
 | `js/sound.js` | Ambient soundscapes and timer chime |

@@ -84,6 +84,19 @@ export async function seedSample() {
     ] },
   ];
   const p = await createProjectFrom('The Lighthouse Keeper', chapters, { subtitle: 'Sample project', author: 'Inkfold', cover: 1, sample: true, createdAt: 0, updatedAt: 0 }, { fixedIds: 'prj-sample' });
+  // A small story bible, so the Bible and Relationships views have something to show
+  const E = (id, type, title, data) => ({ id: 'prj-sample-' + id, projectId: p.id, type, parentId: null, order: 0, title, content: '', deleted: false, data, updatedAt: Date.now(), rev: 'seed', revs: ['seed'] });
+  const rel = (id, a, b, kind, note = '') => E(id, 'rel', '', { a: 'prj-sample-' + a, b: 'prj-sample-' + b, kind, note });
+  await db.writeBatch({ items: [
+    E('mara', 'character', 'Mara Ellery', { role: 'Protagonist', age: '29', occupation: 'Relief lighthouse keeper', aliases: ['Mara'], traits: ['stubborn', 'observant', 'counts things when anxious'], want: 'To find out why her father stopped writing in the log.', need: 'To stop treating every silence as a puzzle she has to solve alone.', arcStart: 'Takes the post to prove she needs no one.', arcEnd: 'Asks the town for help on the night of the second fog.', notes: 'Grew up inland with [[Edith Ellery]]. Has her father’s handwriting.' }),
+    E('ansel', 'character', 'Ansel Ellery', { role: 'Minor', age: '61', occupation: 'Former keeper of Carro Point', aliases: ['Ansel'], traits: ['secretive', 'meticulous'], want: 'To keep the light burning no matter what.', notes: 'Last log entry: the fourth of March. See [[The second fog]].' }),
+    E('edith', 'character', 'Edith Ellery', { role: 'Supporting', age: '58', occupation: 'Schoolteacher', aliases: ['Edith'], traits: ['warm', 'guarded'], notes: 'Left [[Carro Point]] when Mara was six.' }),
+    E('tobias', 'character', 'Tobias Venn', { role: 'Antagonist', age: '47', occupation: 'Harbourmaster', aliases: ['Tobias', 'the harbourmaster'], traits: ['charming', 'impatient'], want: 'To decommission the light and sell the point.', notes: 'Met Mara at the jetty and didn’t offer to take her bags.' }),
+    E('carro', 'place', 'Carro Point', { kind: 'Headland', region: 'North coast', notes: 'A spit of black rock with a lighthouse and a keeper’s cottage. One hundred and twelve steps to the lamp.' }),
+    E('fog', 'lore', 'The second fog', { category: 'Local legend', notes: 'Fishermen say the first fog is weather. The second is something else.' }),
+    rel('r1', 'ansel', 'mara', 'parent'), rel('r2', 'edith', 'mara', 'parent'), rel('r3', 'ansel', 'edith', 'spouse', 'separated'),
+    rel('r4', 'tobias', 'ansel', 'rival', 'over the future of the light'), rel('r5', 'tobias', 'mara', 'enemy'),
+  ] });
   return p;
 }
 

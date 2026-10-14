@@ -1,5 +1,6 @@
 // Inkfold — text model. Every format (rich text, Markdown, DOCX, PDF) goes through "blocks":
-// [{ type: 'p'|'h2'|'h3'|'quote'|'hr'|'ul'|'ol', runs: [{ text, b, i }] }]
+// [{ type: 'p'|'h2'|'h3'|'quote'|'hr'|'ul'|'ol', runs: [{ text, b, i, c, r }] }]
+// c = comment id (margin note anchor), r = revision round (colour-coded edits)
 
 const BLOCK_TAGS = new Set(['P', 'DIV', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'BLOCKQUOTE', 'LI', 'UL', 'OL', 'HR', 'SECTION', 'ARTICLE', 'PRE']);
 
@@ -17,8 +18,9 @@ export function htmlToBlocks(html) {
     if (!text) return;
     const blk = ensure(ctx);
     const last = blk.runs[blk.runs.length - 1];
-    if (last && last.b === !!ctx.b && last.i === !!ctx.i) last.text += text;
-    else blk.runs.push({ text, b: !!ctx.b, i: !!ctx.i });
+    const c = ctx.c || null, r = ctx.r || null;
+    if (last && last.b === !!ctx.b && last.i === !!ctx.i && last.c === c && last.r === r) last.text += text;
+    else blk.runs.push({ text, b: !!ctx.b, i: !!ctx.i, c, r });
   }
 
   function walk(node, ctx) {
@@ -34,6 +36,8 @@ export function htmlToBlocks(html) {
     const next = { ...ctx };
     if (tag === 'B' || tag === 'STRONG' || /font-weight:\s*(bold|[6-9]00)/.test(style)) next.b = true;
     if (tag === 'I' || tag === 'EM' || /font-style:\s*italic/.test(style)) next.i = true;
+    if (tag === 'MARK' && node.dataset && node.dataset.c) next.c = node.dataset.c;
+    if (tag === 'INS' && node.dataset && node.dataset.r) next.r = +node.dataset.r || null;
     if (tag === 'BR') { addText('\n', ctx); return; }
     if (tag === 'HR') { end(); startBlock('hr'); end(); return; }
     if (!BLOCK_TAGS.has(tag)) { node.childNodes.forEach(c => walk(c, next)); return; }
@@ -69,6 +73,8 @@ function runsToHtml(runs) {
     let t = esc(r.text).replace(/\n/g, '<br>');
     if (r.i) t = `<em>${t}</em>`;
     if (r.b) t = `<strong>${t}</strong>`;
+    if (r.r) t = `<ins data-r="${r.r}">${t}</ins>`;
+    if (r.c) t = `<mark class="cmt" data-c="${String(r.c).replace(/[^\w-]/g, '')}">${t}</mark>`;
     return t;
   }).join('');
 }

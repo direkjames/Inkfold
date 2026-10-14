@@ -4,13 +4,15 @@ import { COVERS, buildTree, flatScenes, newProjectRecord, newChapter, newScene, 
 import * as stats from './stats.js';
 import * as sound from './sound.js';
 import { initBoard, renderBoard, renderOutline, sceneDetails, labelMenu } from './board.js';
-import { sanitizeHtml, htmlWords, htmlToMd, mdToHtml, countWords, blocksToHtml, plainToBlocks } from './text.js';
+import { initBible, renderBible, nameIndex, nameRegex, hoverCardFor, hideHover, relSheet, KINDS } from './bible.js';
+import * as revise from './revise.js';
+import { sanitizeHtml, htmlWords, htmlToMd, mdToHtml, countWords, blocksToHtml, plainToBlocks, htmlToBlocks } from './text.js';
 import * as io from './io.js';
 import * as sync from './sync.js';
 import { loadLib, LIBS } from './libs.js';
 import { ICONS, icon, MARK, $, $$, esc, num, el, debounce, ago, haptic, toast, errorToast, closePop, popOpen, popover, menu, sheets, sheet, confirmSheet } from './ui.js';
 
-const VERSION = '1.1.0';
+const VERSION = '1.2.0';
 
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape') {
@@ -29,7 +31,7 @@ const FONTS = {
   hanken: { name: 'Hanken', css: "'Hanken Grotesk', system-ui, sans-serif", note: 'Clean sans' },
   plex: { name: 'Plex Mono', css: "'IBM Plex Mono', ui-monospace, monospace", note: 'Typewriter' },
 };
-const DEFAULTS = { theme: 'light', font: 'newsreader', size: 19, lh: 1.7, width: 680, typewriter: true, smart: true, indent: false, dim: 'off', dailyGoal: 500, volume: 0.5 };
+const DEFAULTS = { theme: 'light', font: 'newsreader', size: 19, lh: 1.7, width: 680, typewriter: true, smart: true, indent: false, dim: 'off', dailyGoal: 500, volume: 0.5, revRound: 0, showRev: true, nameHints: true };
 let settings = { ...DEFAULTS };
 
 function applySettings() {
@@ -237,6 +239,7 @@ function renderWorkspace() {
           <button data-view="write" role="tab" title="Write">${icon('pen')}<span>Write</span></button>
           <button data-view="board" role="tab" title="Corkboard">${icon('board')}<span>Board</span></button>
           <button data-view="outline" role="tab" title="Outline">${icon('outline')}<span>Outline</span></button>
+          <button data-view="bible" role="tab" title="Story bible">${icon('bible')}<span>Bible</span></button>
         </div>
         <div class="fmt" id="fmtBar" role="toolbar" aria-label="Formatting">
           <button class="icon-btn" data-fmt="bold" title="Bold (Ctrl+B)" aria-label="Bold"><b>B</b></button>
@@ -245,13 +248,14 @@ function renderWorkspace() {
           <button class="icon-btn" data-fmt="quote" title="Quote (> then space)" aria-label="Quote">${icon('quote')}</button>
           <button class="icon-btn" data-fmt="list" title="List (- then space)" aria-label="List">${icon('list')}</button>
           <button class="icon-btn" data-fmt="break" title="Scene break (*** then Enter)" aria-label="Scene break"><span class="ast">⁂</span></button>
+          <button class="icon-btn" data-fmt="comment" title="Add a margin note" aria-label="Add a margin note">${icon('comment')}</button>
         </div>
-        <button class="icon-btn hide-narrow" data-act="sound" title="Soundscapes" aria-label="Soundscapes">${icon('headphones')}</button>
+        <span class="rev-ind" id="revIndicator" hidden></span>
+        <button class="icon-btn" data-act="panel" title="Notes, revision tools and reference" aria-label="Side panel">${icon('panel')}</button>
         <button class="icon-btn" data-act="sprint" title="Writing sprint" aria-label="Writing sprint">${icon('timer')}</button>
         <button class="icon-btn" data-act="type" title="Typography" aria-label="Typography">${icon('type')}</button>
         <button class="icon-btn hide-narrow" data-act="focus" title="Focus mode (Ctrl+.)" aria-label="Focus mode">${icon('focus')}</button>
-        <button class="icon-btn hide-narrow" data-act="export" title="Export" aria-label="Export">${icon('export')}</button>
-        <button class="icon-btn only-narrow" data-act="more-narrow" aria-label="More">${icon('more')}</button>
+        <button class="icon-btn" data-act="more-tools" title="More" aria-label="More tools">${icon('more')}</button>
       </header>
       <div class="scroller" id="scroller">
         <article class="page">
@@ -263,6 +267,8 @@ function renderWorkspace() {
       </div>
       <div class="view-scroll" id="boardView" hidden></div>
       <div class="view-scroll" id="outlineView" hidden></div>
+      <div class="view-fill" id="bibleView" hidden></div>
+      <aside class="sidepanel" id="sidePanel" hidden aria-label="Side panel"></aside>
       <div class="statusbar tnum" id="statusbar">
         <button class="sprint-pill" id="sprintPill" data-act="sprint" hidden></button>
         <span class="sb-words"><b id="sceneWords">0</b><span id="sceneTarget"></span> words</span><span class="proj-total"><span id="projWords2">0</span> in project</span><span class="saved" id="saveState"><span class="dot"></span>Saved</span>
@@ -281,7 +287,8 @@ function renderWorkspace() {
   renderSprintPill();
 }
 
-async function setView(v, { save = true } = {}) {
+async function setView(v, opts = {}) {
+  const save = opts.save !== false;
   await saveNow();
   state.view = v;
   if (save) db.setMeta('view:' + state.project.id, v);
@@ -290,13 +297,18 @@ async function setView(v, { save = true } = {}) {
   $('#scroller').hidden = v !== 'write';
   $('#boardView').hidden = v !== 'board';
   $('#outlineView').hidden = v !== 'outline';
+  $('#bibleView').hidden = v !== 'bible';
   if (v === 'board') renderBoard($('#boardView'));
   if (v === 'outline') renderOutline($('#outlineView'));
+  if (v === 'bible') renderBible($('#bibleView'), opts.select ? { select: opts.select } : {});
+  if (v !== 'write') { revise.closePanel(); hideHover(true); }
+  else refreshNames();
   if (v !== 'write' && document.body.classList.contains('focus')) setFocusMode(false);
 }
 function renderCurrentView() {
   if (state.view === 'board') renderBoard($('#boardView'));
   else if (state.view === 'outline') renderOutline($('#outlineView'));
+  else if (state.view === 'bible') renderBible($('#bibleView'));
 }
 
 async function saveItem(it) {
@@ -369,12 +381,18 @@ async function onWorkspaceClick(e) {
   if (act === 'sprint') return state.sprint ? sprintMenu(t.closest('[data-act]')) : sprintPanel(t.closest('[data-act]'));
   if (act === 'scene-status') return statusMenu(t.closest('[data-act]'));
   if (act === 'scene-details') return sceneDetails(state.scene.id);
-  if (act === 'more-narrow') return menu(t.closest('[data-act]'), [
-    { k: 'focus', icon: 'focus', label: 'Focus mode', run: () => setFocusMode(true) },
-    { k: 'sound', icon: 'headphones', label: 'Soundscapes', run: () => soundPanel(t.closest('[data-act]')) },
+  if (act === 'panel') return revise.togglePanel();
+  if (act === 'more-tools') { const a = t.closest('[data-act]'); return menu(a, [
+    { k: 'find', icon: 'search', label: 'Find & replace', run: openFind },
+    { k: 'history', icon: 'history', label: 'Version history', run: () => { if (state.view !== 'write') setView('write').then(revise.historySheet); else revise.historySheet(); } },
+    { k: 'listen', icon: 'speaker', label: 'Read aloud', run: () => { if (state.view !== 'write') setView('write').then(revise.readAloud); else revise.readAloud(); } },
+    { k: 'revise', icon: 'sparkle', label: 'Revision tools', run: () => { if (state.view !== 'write') setView('write').then(() => revise.openPanel('revise')); else revise.openPanel('revise'); } },
+    '-',
+    { k: 'sound', icon: 'headphones', label: 'Soundscapes', run: () => soundPanel(a) },
     { k: 'stats', icon: 'chart', label: 'Goals & stats', run: statsSheet },
+    ...(matchMedia('(max-width: 860px)').matches ? [{ k: 'focus', icon: 'focus', label: 'Focus mode', run: () => setFocusMode(true) }] : []),
     { k: 'export', icon: 'export', label: 'Export', run: exportSheet },
-  ]);
+  ]); }
   if (act === 'close-drawer') return document.body.classList.remove('binder-open');
   if (act === 'add-chapter') return addChapter();
   if (act === 'focus') return setFocusMode(!document.body.classList.contains('focus'));
@@ -562,6 +580,10 @@ async function loadScene(id) {
   $('#scroller').scrollTop = 0;
   setSaveState(true);
   document.title = `${sc.title || 'Untitled'} — ${state.project.title}`;
+  revise.stopSpeech();
+  revise.applyRevisionView();
+  refreshNames();
+  revise.onSceneChanged();
 }
 
 function updateCrumbs() {
@@ -615,7 +637,12 @@ async function saveNow() {
 }
 const saveSoon = debounce(saveNow, 450);
 const countSoon = debounce(updateCounts, 180);
-function changed() { state.dirty = true; setSaveState(false); saveSoon(); countSoon(); }
+const versionedAt = new Map();
+function changed() {
+  const sc = state.scene;
+  if (sc && Date.now() - (versionedAt.get(sc.id) || 0) > 30 * 60 * 1000) { versionedAt.set(sc.id, Date.now()); revise.saveVersion({ ...sc }, 'Before editing', true); }
+  state.dirty = true; setSaveState(false); saveSoon(); countSoon(); refreshNamesSoon(); revise.onEditorInput();
+}
 
 // ---------- Goals, celebrations ----------
 async function afterWordsAdded(delta, before, sc) {
@@ -672,18 +699,22 @@ function prevChars(n) {
   return r.startContainer.nodeValue.slice(Math.max(0, r.startOffset - n), r.startOffset);
 }
 function smartPunct(e) {
-  if (!settings.smart || e.inputType !== 'insertText' || !e.data) return;
+  if (e.inputType !== 'insertText' || !e.data) return;
   const d = e.data, prev = prevChars(2), p1 = prev.slice(-1);
-  const opening = !p1 || /[\s(\[{—–"“‘ -]/.test(p1);
   let ins = null, del = 0;
-  if (d === '"') ins = opening ? '“' : '”';
-  else if (d === "'") ins = opening ? '‘' : '’';
-  else if (d === '-' && p1 === '-') { ins = '—'; del = 1; }
-  else if (d === '.' && prev === '..') { ins = '…'; del = 2; }
-  if (!ins) return;
+  if (settings.smart) {
+    const opening = !p1 || /[\s(\[{—–"“‘ -]/.test(p1);
+    if (d === '"') ins = opening ? '“' : '”';
+    else if (d === "'") ins = opening ? '‘' : '’';
+    else if (d === '-' && p1 === '-') { ins = '—'; del = 1; }
+    else if (d === '.' && prev === '..') { ins = '…'; del = 2; }
+  }
+  const revising = settings.revRound && !isMd() && e.target.id === 'editor';
+  if (!ins && !revising) return;
   e.preventDefault();
   for (let i = 0; i < del; i++) document.execCommand('delete');
-  document.execCommand('insertText', false, ins);
+  if (revising) revise.revisionInsert(e, ins || d);
+  else document.execCommand('insertText', false, ins);
 }
 
 function currentBlock() {
@@ -752,12 +783,62 @@ function bindEditor() {
     e.preventDefault();
     const html = e.clipboardData.getData('text/html');
     const text = e.clipboardData.getData('text/plain');
-    document.execCommand('insertHTML', false, html ? sanitizeHtml(html) : blocksToHtml(plainToBlocks(text)) || esc(text));
+    let out = html ? sanitizeHtml(html) : blocksToHtml(plainToBlocks(text)) || esc(text);
+    const blocks = htmlToBlocks(out);
+    if (settings.revRound && blocks.length === 1 && blocks[0].runs) {
+      // single paragraph pasted during a revision round: insert it coloured, inline
+      blocks[0].runs.forEach(r => { r.r = settings.revRound; });
+      const tpl = document.createElement('template'); tpl.innerHTML = blocksToHtml(blocks).replace(/^<(p|h2|h3|li)>|<\/(p|h2|h3|li)>$/g, '');
+      const sel = getSelection(); const r = sel.getRangeAt(0); r.deleteContents();
+      const last = tpl.content.lastChild; r.insertNode(tpl.content);
+      if (last) { const c = document.createRange(); c.setStartAfter(last); c.collapse(true); sel.removeAllRanges(); sel.addRange(c); }
+      changed(); return;
+    }
+    document.execCommand('insertHTML', false, out);
   });
   ed.addEventListener('drop', e => { if (e.dataTransfer && e.dataTransfer.files.length) e.preventDefault(); });
+  ed.addEventListener('click', e => { const m = e.target.closest('mark.cmt'); if (m) revise.focusNote(m.dataset.c); });
+  // character hover cards
+  let raf = 0;
+  ed.addEventListener('mousemove', e => { cancelAnimationFrame(raf); raf = requestAnimationFrame(() => nameHover(e.clientX, e.clientY)); });
+  ed.addEventListener('mouseleave', () => hideHover());
+}
+
+// ---------- Names from the story bible: underline + hover cards ----------
+let nameRanges = [];
+function refreshNames() {
+  nameRanges = [];
+  const ed = $('#editor');
+  const ok = window.CSS && CSS.highlights && window.Highlight;
+  if (!ed || isMd() || !settings.nameHints || !ok) { if (ok) CSS.highlights.delete('ink-name'); return; }
+  const idx = nameIndex(); const byTerm = new Map(idx.map(x => [x.term, x.id]));
+  const re = nameRegex(idx.map(x => x.term));
+  if (re) for (const blk of ed.querySelectorAll(':scope > *, :scope > ul > li, :scope > ol > li, :scope > blockquote > *')) {
+    if (/^(UL|OL|BLOCKQUOTE|HR)$/.test(blk.tagName)) continue;
+    const text = blk.textContent; re.lastIndex = 0; let m;
+    while ((m = re.exec(text))) { const r = revise.rangeIn(blk, m.index, m.index + m[0].length); if (r) nameRanges.push({ r, id: byTerm.get(m[0]) }); }
+  }
+  if (nameRanges.length) CSS.highlights.set('ink-name', new Highlight(...nameRanges.map(x => x.r))); else CSS.highlights.delete('ink-name');
+}
+const refreshNamesSoon = debounce(refreshNames, 900);
+function nameHover(x, y) {
+  if (!nameRanges.length) return;
+  for (const n of nameRanges) {
+    for (const rect of n.r.getClientRects()) {
+      if (x >= rect.left - 1 && x <= rect.right + 1 && y >= rect.top - 1 && y <= rect.bottom + 1) return hoverCardFor(n.id, rect);
+    }
+  }
+  hideHover();
+}
+
+function openFind() {
+  const sel = getSelection();
+  const pre = sel && !sel.isCollapsed && $('#editor')?.contains(sel.anchorNode) ? sel.toString().trim().slice(0, 80) : '';
+  revise.findSheet(pre);
 }
 
 function applyFormat(f) {
+  if (f === 'comment') return revise.addComment();
   if (isMd()) {
     const ta = $('#mdEditor'); ta.focus();
     const map = { bold: ['**', '**'], italic: ['*', '*'], heading: ['## ', ''], quote: ['> ', ''], list: ['- ', ''], break: ['\n* * *\n', ''] };
@@ -789,6 +870,7 @@ document.addEventListener('keydown', e => {
   if (!mod || $('#workspace').hidden) return;
   if (e.key === 's') { e.preventDefault(); state.dirty = true; saveNow().then(() => toast('Saved', null, 1400)); }
   if (e.key === '.') { e.preventDefault(); setFocusMode(!document.body.classList.contains('focus')); }
+  if (e.key === 'f' && !e.shiftKey) { e.preventDefault(); openFind(); }
 });
 window.addEventListener('pagehide', () => { saveNow(); });
 document.addEventListener('visibilitychange', () => { if (document.hidden) saveNow(); });
@@ -1220,7 +1302,7 @@ async function settingsSheet(focus) {
     navigator.storage?.estimate?.().catch(() => null), navigator.storage?.persisted?.().catch(() => false), db.meta('lastSync', {})
   ]);
   const trashP = projects.filter(p => p.deleted);
-  const trashI = items.filter(i => i.deleted && !i.deletedWith && !(projects.find(p => p.id === i.projectId) || {}).deleted);
+  const trashI = items.filter(i => i.deleted && !i.deletedWith && ['chapter', 'scene', 'character', 'place', 'lore'].includes(i.type) && !(projects.find(p => p.id === i.projectId) || {}).deleted);
   const pname = id => (projects.find(p => p.id === id) || {}).title || '';
   const standalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone;
   const mb = b => b > 1e6 ? (b / 1e6).toFixed(1) + ' MB' : Math.max(1, Math.round(b / 1e3)) + ' KB';
@@ -1242,7 +1324,7 @@ async function settingsSheet(focus) {
       <div class="card-list">${snaps.length ? snaps.sort((a, b) => b.createdAt - a.createdAt).map(sn => `<div class="li"><div class="li-icon">${icon('clock')}</div><div class="li-text"><b>${esc(sn.reason)}</b><span>${ago(sn.createdAt)} · ${sn.counts.projects} projects, ${sn.counts.scenes} scenes</span></div><button class="btn btn-ghost btn-sm" data-snap="${sn.id}">Restore</button></div>`).join('') : `<div class="empty-note">Inkfold saves a snapshot automatically before every sync, import and restore.</div>`}</div>
     </div>
     <div class="group"><div class="group-title">Trash</div>
-      <div class="card-list">${trashP.length + trashI.length ? [...trashP.map(p => ({ id: p.id, kind: 'project', title: p.title, sub: 'Project', at: p.deletedAt })), ...trashI.map(i => ({ id: i.id, kind: 'item', title: i.title, sub: `${i.type === 'chapter' ? 'Chapter' : 'Scene'} in ${pname(i.projectId)}`, at: i.deletedAt }))]
+      <div class="card-list">${trashP.length + trashI.length ? [...trashP.map(p => ({ id: p.id, kind: 'project', title: p.title, sub: 'Project', at: p.deletedAt })), ...trashI.map(i => ({ id: i.id, kind: 'item', title: i.title, sub: `${i.type === 'chapter' ? 'Chapter' : i.type === 'scene' ? 'Scene' : (KINDS[i.type]?.one || 'Item')} in ${pname(i.projectId)}`, at: i.deletedAt }))]
         .sort((a, b) => b.at - a.at).map(t => `<div class="li"><div class="li-icon">${icon(t.kind === 'project' ? 'book' : 'file')}</div><div class="li-text"><b>${esc(t.title)}</b><span>${esc(t.sub)} · deleted ${ago(t.at)}</span></div><button class="btn btn-ghost btn-sm" data-untrash="${t.kind}:${t.id}">Restore</button><button class="icon-btn" data-purge="${t.kind}:${t.id}" aria-label="Delete forever">${icon('x')}</button></div>`).join('')
         : `<div class="empty-note">Trash is empty. Deleted items stay here for 30 days.</div>`}</div>
     </div>
@@ -1284,7 +1366,7 @@ async function untrash(key) {
   const items = await db.all('items');
   const it = items.find(i => i.id === id);
   const batch = [it];
-  if (it.type === 'chapter') items.filter(i => i.deletedWith === id).forEach(i => batch.push(i));
+  items.filter(i => i.deletedWith === id && i.type !== 'comment').forEach(i => batch.push(i));
   if (it.type === 'scene') { const parent = items.find(i => i.id === it.parentId); if (parent && parent.deleted) { parent.deleted = false; delete parent.deletedAt; touch(parent); batch.push(parent); } }
   batch.forEach(i => { i.deleted = false; delete i.deletedAt; delete i.deletedWith; touch(i); });
   await db.writeBatch({ items: batch });
@@ -1481,6 +1563,16 @@ async function boot() {
     settings = { ...DEFAULTS, ...(await db.meta('settings', {})) };
     if (!settings.themeV2) { if (settings.theme === 'system') settings.theme = 'light'; settings.themeV2 = true; await db.setMeta('settings', settings); }
     applySettings();
+    const openEntry = id => setView('bible', { select: id });
+    initBible({ state, saveItem, openEntry,
+      openScene: async id => { await setView('write'); await loadScene(id); },
+      findInScene: async (id, terms) => { await setView('write'); await loadScene(id); setTimeout(() => revise.highlightFind(nameRegex(terms), true), 60); },
+      onChange: () => { refreshNamesSoon(); } });
+    revise.initRevise({ state, settings, saveSettings, saveNow, saveItem, isMd,
+      reloadScene: async () => { const id = state.scene.id; state.dirty = false; state.items = await db.byProject(state.project.id); await loadScene(id); renderBinder(); },
+      openScene: async id => { await setView('write'); await loadScene(id); },
+      markChanged: () => changed(),
+      onChange: () => { renderBinder(); updateCrumbs(); } });
     initBoard({ state, saveItem, openScene: async id => { await setView('write'); await loadScene(id); }, addScene, addChapter,
       onChange: (o = {}) => { renderBinder(); updateCrumbs(); updateCounts(); if (!o.skipView) renderCurrentView(); } });
     state.device = await deviceInfo();
