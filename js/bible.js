@@ -70,6 +70,14 @@ function firstNames() {
   fnCache = { key, info };
   return info;
 }
+export const namesOf = it => names(it);
+// Create a story bible entry from elsewhere (e.g. a map pin or a scene's place)
+export async function createEntry(type, title) {
+  const it = touch({ id: uid(type.slice(0, 2) + '-'), projectId: ctx.state.project.seriesId || ctx.state.project.id, type, parentId: null, order: entries(type).length + 1, title: title || '', content: '', deleted: false, data: { aliases: [], traits: [] } });
+  ctx.state.items.push(it);
+  await ctx.saveItem(it);
+  return it;
+}
 export function firstNameInfo(it) { return firstNames().get(it.id) || null; }
 const names = it => {
   const full = fullNames(it);
@@ -397,10 +405,17 @@ function mentions(it, box, root) {
   const hits = re ? scenes.map(s => ({ s, n: (htmlToText(s.content).match(re) || []).length })).filter(x => x.n) : [];
   const linkers = entries().filter(e => e.id !== it.id && terms.some(t => ((e.data && e.data.notes) || '').toLowerCase().includes(`[[${t.toLowerCase()}]]`)));
   const total = hits.reduce((s, x) => s + x.n, 0);
+  const setHere = it.type === 'place' ? scenes.filter(sc => sc.place === it.id) : [];
+  const onMaps = it.type === 'place' ? ctx.state.items.filter(i => i.type === 'mapmark' && !i.deleted && i.data && i.data.placeId === it.id)
+    .map(mk => ({ mk, map: ctx.state.items.find(i => i.id === mk.parentId) })).filter(x => x.map && !x.map.deleted && ctx.openMap) : [];
   box.innerHTML = `<div class="bd-sec-h"><span class="group-title">Appears in</span>${total ? `<span class="note">${num(total)} mention${total === 1 ? '' : 's'} in ${hits.length} scene${hits.length === 1 ? '' : 's'}</span>` : ''}</div>
     ${hits.length ? `<div class="mention-list">${hits.map(x => `<button class="mention" data-scene="${x.s.id}">${icon('file')}<span>${esc(x.s.title)}</span><b class="tnum">${x.n}</b></button>`).join('')}</div>` : `<p class="note" style="text-align:left">${it.title ? `“${esc(it.title)}” isn’t mentioned in any scene yet.` : 'Give this entry a name to find it in your scenes.'}</p>`}
+    ${setHere.length ? `<div class="bd-sec-h" style="margin-top:14px"><span class="group-title">Scenes set here</span><span class="note">${setHere.length}</span></div><div class="mention-list">${setHere.map(x => `<button class="mention" data-open-sc="${x.id}">${icon('pin')}<span>${esc(x.title || 'Untitled')}</span></button>`).join('')}</div>` : ''}
+    ${onMaps.length ? `<div class="bd-sec-h" style="margin-top:14px"><span class="group-title">On maps</span></div><div class="mention-list">${onMaps.map(x => `<button class="mention" data-open-map="${x.map.id}" data-mk="${x.mk.id}">${icon('image')}<span>${esc(x.map.title || 'Map')}</span></button>`).join('')}</div>` : ''}
     ${linkers.length ? `<div class="bd-sec-h" style="margin-top:14px"><span class="group-title">Linked from</span></div><div class="mention-list">${linkers.map(e => `<button class="mention" data-goto="${e.id}">${avatar(e, 22)}<span>${esc(e.title)}</span></button>`).join('')}</div>` : ''}`;
   $$('[data-scene]', box).forEach(b => b.onclick = () => ctx.findInScene(b.dataset.scene, terms));
+  $$('[data-open-sc]', box).forEach(b => b.onclick = () => ctx.openScene(b.dataset.openSc));
+  $$('[data-open-map]', box).forEach(b => b.onclick = () => ctx.openMap(b.dataset.openMap, b.dataset.mk));
   $$('[data-goto]', box).forEach(b => b.onclick = () => { const t = ctx.state.items.find(i => i.id === b.dataset.goto); tab = t.type; selected = t.id; renderBible(root); });
 }
 

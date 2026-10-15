@@ -2,7 +2,7 @@
 import { db, deviceInfo } from './db.js';
 import { loadLib, LIBS } from './libs.js';
 
-const ITEM_FIELDS = ['projectId', 'type', 'parentId', 'order', 'title', 'content', 'deleted', 'status', 'label', 'pov', 'synopsis', 'target', 'data', 'when', 'enc'];
+const ITEM_FIELDS = ['projectId', 'type', 'parentId', 'order', 'title', 'content', 'deleted', 'status', 'label', 'pov', 'synopsis', 'target', 'data', 'when', 'enc', 'place', 'cast'];
 const PROJECT_FIELDS = ['title', 'subtitle', 'author', 'cover', 'format', 'deleted', 'target', 'deadline', 'coverImage', 'mode', 'compile', 'enc', 'align', 'kind', 'seriesId', 'seriesOrder'];
 const sig = (r, f) => JSON.stringify(f.map(k => r[k] ?? null));
 

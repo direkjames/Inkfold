@@ -4,7 +4,7 @@ import { loadLib, LIBS } from './libs.js';
 import { buildTree, createProjectFrom, touch } from './model.js';
 import { htmlToBlocks, blocksToMd, mdToBlocks, plainToBlocks } from './text.js';
 import { mergeLibraries } from './sync.js';
-import { bibleCopyFor } from './series.js';
+import { bibleCopyFor, remapRefs } from './series.js';
 import { uid } from './db.js';
 
 const today = () => new Date().toISOString().slice(0, 10);
@@ -96,7 +96,7 @@ export async function exportProjectFile(projectId) {
   // a book in a series carries a copy of the shared story bible, so the file stands on its own
   const shared = await bibleCopyFor(project);
   delete project.seriesId; delete project.seriesOrder;
-  const items = (await db.byProject(projectId)).map(i => { const o = { ...i }; delete o._dec; delete o.enc; return o; }).concat(shared);
+  const items = (await db.byProject(projectId)).map(i => { const o = { ...i }; delete o._dec; delete o.enc; if (shared.map.size) remapRefs(o, shared.map); return o; }).concat(shared.items);
   const blob = new Blob([JSON.stringify({ format: 'inkfold-project', version: 1, exportedAt: Date.now(), project, items })], { type: 'application/json' });
   return saveFile(blob, `${safeName(project.title)}.inkfold`, { preferShare: true });
 }
@@ -115,10 +115,8 @@ export async function importProjectData(data, mode) {
     data.items.forEach(i => map.set(i.id, uid(i.type === 'chapter' ? 'ch-' : i.type === 'scene' ? 'sc-' : (i.type || 'it').slice(0, 2) + '-')));
     const project = touch({ ...data.project, id: newPid, revs: [], title: data.project.title + ' (copy)' });
     delete project.seriesId;
-    // pictures and relationships point at other items by id, so those references move too
-    const remapContent = c => typeof c === 'string' ? c.replace(/data-img="([\w-]+)"/g, (m, id) => `data-img="${map.get(id) || id}"`) : c;
-    const remapData = d => d && d.a && d.b ? { ...d, a: map.get(d.a) || d.a, b: map.get(d.b) || d.b } : d;
-    const items = data.items.map(i => touch({ ...i, id: map.get(i.id), projectId: newPid, parentId: i.parentId ? map.get(i.parentId) || null : null, content: remapContent(i.content), data: i.type === 'rel' ? remapData(i.data) : i.data, revs: [] }));
+    // pictures, relationships, map marks and scene places point at other items by id, so those references move too
+    const items = data.items.map(i => { const c = { ...i, id: map.get(i.id), projectId: newPid, parentId: i.parentId ? map.get(i.parentId) || null : null, revs: [] }; remapRefs(c, map); return touch(c); });
     await db.writeBatch({ projects: [project], items });
     return project;
   }

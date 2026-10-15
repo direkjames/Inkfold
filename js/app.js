@@ -17,11 +17,12 @@ import * as io from './io.js';
 import { compressImage, newImageItem, hydrateImages, IMG_SIZES } from './images.js';
 import * as series from './series.js';
 import { computeExp, EXP_RULES } from './level.js';
+import { initMaps, renderMaps, scenePlaceSheet, castSheet, castCount, placeName, showOnMap, allMaps } from './maps.js';
 import * as sync from './sync.js';
 import { loadLib, LIBS } from './libs.js';
 import { ICONS, icon, MARK, $, $$, esc, num, el, debounce, ago, haptic, toast, errorToast, closePop, popOpen, popover, menu, sheets, sheet, confirmSheet } from './ui.js';
 
-const VERSION = '1.4.0';
+const VERSION = '1.5.0';
 
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape') {
@@ -404,6 +405,7 @@ function renderWorkspace() {
           ${mode === 'journal' ? `<button data-view="calendar" role="tab" title="Calendar">${icon('calendar')}<span>Calendar</span></button>` : `<button data-view="board" role="tab" title="Corkboard">${icon('board')}<span>Board</span></button>`}
           <button data-view="outline" role="tab" title="Outline">${icon('outline')}<span>Outline</span></button>
           ${mode === 'novel' || mode === 'screenplay' ? `<button data-view="timeline" role="tab" title="Timeline">${icon('timeline')}<span>Timeline</span></button>` : ''}
+          ${['novel', 'screenplay', 'journal'].includes(mode) ? `<button data-view="map" role="tab" title="Map">${icon('pin')}<span>Map</span></button>` : ''}
           <button data-view="bible" role="tab" title="Story bible">${icon('bible')}<span>Bible</span></button>
         </div>
         <div class="fmt" id="fmtBar" role="toolbar" aria-label="Formatting">
@@ -435,6 +437,7 @@ function renderWorkspace() {
       <div class="view-scroll" id="boardView" hidden></div>
       <div class="view-scroll" id="outlineView" hidden></div>
       <div class="view-fill" id="bibleView" hidden></div>
+      <div class="view-fill" id="mapView" hidden></div>
       <aside class="sidepanel" id="sidePanel" hidden aria-label="Side panel"></aside>
       <div class="statusbar tnum" id="statusbar">
         <button class="sprint-pill" id="sprintPill" data-act="sprint" hidden></button>
@@ -466,6 +469,8 @@ async function setView(v, opts = {}) {
   $('#boardView').hidden = !['board', 'calendar', 'timeline'].includes(v);
   $('#outlineView').hidden = v !== 'outline';
   $('#bibleView').hidden = v !== 'bible';
+  $('#mapView').hidden = v !== 'map';
+  if (v === 'map') renderMaps($('#mapView'), opts.map || {});
   if (v === 'board') renderBoard($('#boardView'));
   if (v === 'outline') renderOutline($('#outlineView'));
   if (v === 'bible') renderBible($('#bibleView'), opts.select ? { select: opts.select } : {});
@@ -481,6 +486,7 @@ function renderCurrentView() {
   else if (state.view === 'bible') renderBible($('#bibleView'));
   else if (state.view === 'calendar') renderCalendar($('#boardView'), calendarCtx());
   else if (state.view === 'timeline') renderTimeline($('#boardView'));
+  else if (state.view === 'map') renderMaps($('#mapView'));
 }
 
 async function saveItem(it) {
@@ -579,6 +585,8 @@ async function onWorkspaceClick(e) {
   if (act === 'focus') return setFocusMode(!document.body.classList.contains('focus'));
   if (act === 'type') return typographyPanel(t.closest('[data-act]'));
   if (act === 'export') return exportSheet();
+  if (act === 'where') return scenePlaceSheet(state.scene.id, () => { updateCrumbs(); if (state.view !== 'write') renderCurrentView(); }, currentHtml());
+  if (act === 'cast') { await saveNow(); return castSheet(state.scene.id, () => updateCrumbs()); }
   if (act === 'project-menu') return menu(t.closest('[data-act]'), [
     { k: 'edit', icon: 'edit', label: 'Project details', run: projectSheet },
     { k: 'export', icon: 'export', label: 'Export…', run: exportSheet },
@@ -794,9 +802,11 @@ function updateCrumbs() {
   $('#crumbScene').textContent = state.scene.title || 'Untitled scene';
   const st = statusOf(state.scene), lb = labelOf(state.scene);
   const mode = modeOf(state.project), term = T(state.project), sc = state.scene;
+  const hasMap = ['novel', 'screenplay', 'journal'].includes(mode);
+  const where = hasMap ? `<button class="k-when k-where ${sc.place && placeName(sc.place) ? 'set' : ''}" data-act="where" title="Where does it happen?">${icon('pin')}<span>${esc(placeName(sc.place) || 'Set place')}</span></button><button class="k-when k-cast" data-act="cast" title="Who’s in this scene (for journeys)">${icon('users')}<span class="tnum">${castCount(sc)}</span></button>` : '';
   const lead = mode === 'journal'
-    ? `<span>${esc(ch ? ch.title : '')}</span><span class="k-dot"></span><button class="k-mood" data-act="mood" title="How was the day?">${sc.data && sc.data.mood ? moodFace(sc.data.mood, 18) + `<span>${MOODS[sc.data.mood - 1].name}</span>` : `${icon('plus')}<span>Mood</span>`}</button>`
-    : `<span>${term.chapter} ${ci + 1}</span><span class="k-dot"></span><span>${term.scene} ${si + 1}</span>${(mode === 'novel' || mode === 'screenplay') ? `<button class="k-when" data-act="when" title="When does it happen?">${icon('clock')}<span>${esc(whenLabel(sc.when) || 'Set time')}</span></button>` : ''}`;
+    ? `<span>${esc(ch ? ch.title : '')}</span><span class="k-dot"></span><button class="k-mood" data-act="mood" title="How was the day?">${sc.data && sc.data.mood ? moodFace(sc.data.mood, 18) + `<span>${MOODS[sc.data.mood - 1].name}</span>` : `${icon('plus')}<span>Mood</span>`}</button>${where}`
+    : `<span>${term.chapter} ${ci + 1}</span><span class="k-dot"></span><span>${term.scene} ${si + 1}</span>${(mode === 'novel' || mode === 'screenplay') ? `<button class="k-when" data-act="when" title="When does it happen?">${icon('clock')}<span>${esc(whenLabel(sc.when) || 'Set time')}</span></button>` : ''}${where}`;
   $('#sceneKicker').innerHTML = (ch ? lead + (sc.conflictOf ? '<span class="k-dot"></span><span style="color:var(--warn)">Conflicted copy</span>' : '') : '')
     + `<span class="k-spacer"></span><button class="pill st-${st.id} k-pill" data-act="scene-status" title="Change status">${st.name}</button>${lb ? `<i class="lbl-dot" style="--lbl:${lb.color}"></i>` : ''}${state.scene.pov ? `<span class="k-pov">${esc(state.scene.pov)}</span>` : ''}<button class="k-more" data-act="scene-details" title="Scene details" aria-label="Scene details">${icon('more')}</button>`;
 }
@@ -913,6 +923,7 @@ function paletteItems() {
     $$('#viewSeg button').forEach((b, i) => items.push({ group: 'Go to', label: b.title || b.textContent, icon: 'arrowRight', run: () => setView(b.dataset.view), keys: `Mod+Shift+${i + 1}` }));
     buildTree(state.items).forEach((c, ci) => c.scenes.forEach((x, si) => items.push({ group: 'Scenes', label: x.title || 'Untitled', sub: `${ci + 1}.${si + 1} · ${c.title}`, icon: 'file', run: () => setView('write').then(() => loadScene(x.id)) })));
     state.items.filter(i => KINDS[i.type] && !i.deleted && i.title).forEach(i => items.push({ group: 'Story bible', label: i.title, sub: KINDS[i.type].one, icon: KINDS[i.type].icon, run: () => setView('bible', { select: i.id }) }));
+    if ($('#viewSeg [data-view="map"]')) allMaps().forEach(mp => items.push({ group: 'Maps', label: mp.title || 'Untitled map', sub: 'Map', icon: 'pin', run: () => setView('map', { map: { mapId: mp.id } }) }));
   } else {
     A('New project', 'plus', newProjectSheet);
     A('Import a file', 'upload', pickFile, null, 'docx markdown fountain');
@@ -1295,7 +1306,7 @@ document.addEventListener('keydown', e => {
   if (e.key === '/' || e.code === 'Slash') { e.preventDefault(); return shortcutsSheet(); }
   if (k === 'l' && e.shiftKey) { e.preventDefault(); if (sec.lockEnabled()) sec.lockNow(); else toast('Set a PIN in Settings to use app lock'); return; }
   if ($('#workspace').hidden) return;
-  if (e.shiftKey && /^Digit[1-5]$/.test(e.code)) { e.preventDefault(); const views = $$('#viewSeg button').map(b => b.dataset.view); const v = views[+e.code.slice(5) - 1]; if (v) setView(v); return; }
+  if (e.shiftKey && /^Digit[1-7]$/.test(e.code)) { e.preventDefault(); const views = $$('#viewSeg button').map(b => b.dataset.view); const v = views[+e.code.slice(5) - 1]; if (v) setView(v); return; }
   if (e.altKey && /^Digit[1-7]$/.test(e.code) && modeOf(state.project) === 'screenplay') { e.preventDefault(); const ed = $('#editor'); sp.setElement(ed, sp.ELEMENTS[+e.code.slice(5) - 1].id); changed(); updateElementLabel(); return; }
   if (e.shiftKey && k === 'n') { e.preventDefault(); const ch = state.items.find(i => i.id === state.scene?.parentId); if (ch) addScene(ch.id); return; }
   if (e.shiftKey && k === 'm') { e.preventDefault(); revise.addComment(); return; }
@@ -1743,7 +1754,7 @@ async function settingsSheet(focus) {
     navigator.storage?.estimate?.().catch(() => null), navigator.storage?.persisted?.().catch(() => false), db.meta('lastSync', {})
   ]);
   const trashP = projects.filter(p => p.deleted);
-  const trashI = items.filter(i => i.deleted && !i.deletedWith && ['chapter', 'scene', 'character', 'place', 'lore'].includes(i.type) && !(projects.find(p => p.id === i.projectId) || {}).deleted);
+  const trashI = items.filter(i => i.deleted && !i.deletedWith && ['chapter', 'scene', 'character', 'place', 'lore', 'map'].includes(i.type) && !(projects.find(p => p.id === i.projectId) || {}).deleted);
   const pname = id => (projects.find(p => p.id === id) || {}).title || '';
   const standalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone;
   const mb = b => b > 1e6 ? (b / 1e6).toFixed(1) + ' MB' : Math.max(1, Math.round(b / 1e3)) + ' KB';
@@ -1774,7 +1785,7 @@ async function settingsSheet(focus) {
       <div class="card-list">${snaps.length ? snaps.sort((a, b) => b.createdAt - a.createdAt).map(sn => `<div class="li"><div class="li-icon">${icon('clock')}</div><div class="li-text"><b>${esc(sn.reason)}</b><span>${ago(sn.createdAt)} · ${sn.counts.projects} projects, ${sn.counts.scenes} scenes</span></div><button class="btn btn-ghost btn-sm" data-snap="${sn.id}">Restore</button></div>`).join('') : `<div class="empty-note">Inkfold saves a snapshot automatically before every sync, import and restore.</div>`}</div>
     </div>
     <div class="group"><div class="group-title">Trash</div>
-      <div class="card-list">${trashP.length + trashI.length ? [...trashP.map(p => ({ id: p.id, kind: 'project', title: p.title, sub: series.isSeries(p) ? 'Series' : 'Project', at: p.deletedAt })), ...trashI.map(i => ({ id: i.id, kind: 'item', title: i.title, sub: `${i.type === 'chapter' ? 'Chapter' : i.type === 'scene' ? 'Scene' : (KINDS[i.type]?.one || 'Item')} in ${pname(i.projectId)}`, at: i.deletedAt }))]
+      <div class="card-list">${trashP.length + trashI.length ? [...trashP.map(p => ({ id: p.id, kind: 'project', title: p.title, sub: series.isSeries(p) ? 'Series' : 'Project', at: p.deletedAt })), ...trashI.map(i => ({ id: i.id, kind: 'item', title: i.title, sub: `${i.type === 'chapter' ? 'Chapter' : i.type === 'scene' ? 'Scene' : i.type === 'map' ? 'Map' : (KINDS[i.type]?.one || 'Item')} in ${pname(i.projectId)}`, at: i.deletedAt }))]
         .sort((a, b) => b.at - a.at).map(t => `<div class="li"><div class="li-icon">${icon(t.kind === 'project' ? 'book' : 'file')}</div><div class="li-text"><b>${esc(t.title)}</b><span>${esc(t.sub)} · deleted ${ago(t.at)}</span></div><button class="btn btn-ghost btn-sm" data-untrash="${t.kind}:${t.id}">Restore</button><button class="icon-btn" data-purge="${t.kind}:${t.id}" aria-label="Delete forever">${icon('x')}</button></div>`).join('')
         : `<div class="empty-note">Trash is empty. Deleted items stay here for 30 days.</div>`}</div>
     </div>
@@ -2023,9 +2034,11 @@ async function boot() {
     if (!settings.themeV2) { if (settings.theme === 'system') settings.theme = 'light'; settings.themeV2 = true; await db.setMeta('settings', settings); }
     applySettings();
     const openBibleEntry = id => setView('bible', { select: id });
+    initMaps({ state, saveItem, openEntry: openBibleEntry, openScene: async id => { await setView('write'); await loadScene(id); }, onChange: () => {} });
     initBible({ state, saveItem, openEntry: openBibleEntry,
       openScene: async id => { await setView('write'); await loadScene(id); },
       findInScene: async (id, terms) => { await setView('write'); await loadScene(id); setTimeout(() => revise.highlightFind(nameRegex(terms), true), 60); },
+      openMap: (mapId, markId) => setView('map', { map: { mapId, select: markId } }),
       onChange: () => { refreshNamesSoon(); } });
     revise.initRevise({ state, settings, saveSettings, saveNow, saveItem, isMd,
       reloadScene: async () => { const id = state.scene.id; state.dirty = false; state.items = await series.loadItems(state.project); await loadScene(id); renderBinder(); },
@@ -2033,6 +2046,7 @@ async function boot() {
       markChanged: () => changed(),
       onChange: () => { renderBinder(); updateCrumbs(); } });
     initBoard({ state, saveItem, openScene: async id => { await setView('write'); await loadScene(id); }, addScene, addChapter,
+      placeField: it => ['novel', 'screenplay', 'journal'].includes(modeOf(state.project)) ? { name: placeName(it.place), pick: after => scenePlaceSheet(it.id, () => { if (state.scene && state.scene.id === it.id) updateCrumbs(); after && after(); }) } : null,
       whenField: it => ['novel', 'screenplay'].includes(modeOf(state.project)) ? whenLabel(it.when) : null, whenSheet: id => whenSheet(id, () => renderCurrentView()),
       onChange: (o = {}) => { renderBinder(); updateCrumbs(); updateCounts(); if (!o.skipView) renderCurrentView(); } });
     initTimeline({ state, saveItem, openScene: async id => { await setView('write'); await loadScene(id); }, onChange: (o = {}) => { renderBinder(); updateCrumbs(); if (!o.skipView) renderCurrentView(); } });

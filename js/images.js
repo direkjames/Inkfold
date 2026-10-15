@@ -7,12 +7,12 @@ export const IMG_SIZES = [{ w: 33, name: 'Small' }, { w: 55, name: 'Medium' }, {
 const MAX = 1600; // longest side, in pixels
 
 // Shrink a picture so backups and Nearby Sync stay fast. Keeps PNG when the picture has transparency.
-export async function compressImage(file) {
+export async function compressImage(file, MAXSIDE = MAX) {
   if (!file || !/^image\//.test(file.type)) throw new Error('Choose an image file (JPG, PNG, WebP or GIF).');
   const url = URL.createObjectURL(file);
   try {
     const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = () => rej(new Error('That image couldn’t be opened.')); i.src = url; });
-    const k = Math.min(1, MAX / Math.max(img.naturalWidth, img.naturalHeight));
+    const k = Math.min(1, MAXSIDE / Math.max(img.naturalWidth, img.naturalHeight));
     const w = Math.max(1, Math.round(img.naturalWidth * k)), h = Math.max(1, Math.round(img.naturalHeight * k));
     const c = document.createElement('canvas'); c.width = w; c.height = h;
     const cx = c.getContext('2d', { willReadFrequently: true });
@@ -28,7 +28,7 @@ export async function compressImage(file) {
       // paint a white background first so JPEG has nothing to turn black
       const c2 = document.createElement('canvas'); c2.width = w; c2.height = h;
       const x2 = c2.getContext('2d'); x2.fillStyle = '#fff'; x2.fillRect(0, 0, w, h); x2.drawImage(c, 0, 0);
-      src = c2.toDataURL('image/jpeg', 0.85);
+      src = c2.toDataURL('image/jpeg', MAXSIDE > MAX ? 0.82 : 0.85);
     }
     return { src, w, h, name: (file.name || 'Picture').replace(/\.[^.]+$/, '').slice(0, 80) };
   } finally { URL.revokeObjectURL(url); }

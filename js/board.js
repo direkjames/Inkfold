@@ -43,6 +43,7 @@ function cardHtml(s, i) {
     <div class="cx-top"><span class="cx-grip" data-cgrip aria-label="Drag card">${icon('grip')}</span><span class="cx-num tnum">${String(i + 1).padStart(2, '0')}</span>${pill(s)}</div>
     <h4>${esc(s.title || 'Untitled scene')}</h4>
     <p class="cx-syn ${s.synopsis ? '' : 'empty'}">${s.synopsis ? esc(s.synopsis) : 'Add a synopsis…'}</p>
+    ${ctx.placeField && ctx.placeField(s) && ctx.placeField(s).name ? `<span class="cx-place">${icon('pin')}${esc(ctx.placeField(s).name)}</span>` : ''}
     <footer>${s.pov ? `<span class="cx-pov">${icon('pen')}${esc(s.pov)}</span>` : '<span></span>'}${progress(s)}</footer>
     ${pct !== null ? `<div class="cx-bar"><i style="width:${pct}%"></i></div>` : ''}
   </article>`;
@@ -110,9 +111,9 @@ function startCardDrag(e) {
 export function renderOutline(root) {
   const tree = buildTree(ctx.state.items);
   root.innerHTML = `<div class="outline-wrap"><table class="outline">
-    <thead><tr><th class="o-n">#</th><th>Scene</th><th>Status</th><th>POV</th><th class="o-c">Label</th><th class="o-w">Words</th><th class="o-t">Target</th><th class="o-syn">Synopsis</th><th class="o-c"></th></tr></thead>
+    <thead><tr><th class="o-n">#</th><th>Scene</th><th>Status</th><th>POV</th>${hasPlace() ? '<th class="o-pl">Place</th>' : ''}<th class="o-c">Label</th><th class="o-w">Words</th><th class="o-t">Target</th><th class="o-syn">Synopsis</th><th class="o-c"></th></tr></thead>
     <tbody>${tree.map((c, ci) => `
-      <tr class="o-ch"><td colspan="9"><div><span class="eyebrow">Chapter ${ci + 1}</span><b>${esc(c.title)}</b><span class="tnum">${num(c.scenes.reduce((s, x) => s + (x.words || 0), 0))} words</span></div></td></tr>
+      <tr class="o-ch"><td colspan="${hasPlace() ? 10 : 9}"><div><span class="eyebrow">Chapter ${ci + 1}</span><b>${esc(c.title)}</b><span class="tnum">${num(c.scenes.reduce((s, x) => s + (x.words || 0), 0))} words</span></div></td></tr>
       ${c.scenes.map((s, si) => rowHtml(s, si)).join('')}`).join('')}
     </tbody></table></div>`;
   root.onchange = async e => {
@@ -128,10 +129,12 @@ export function renderOutline(root) {
   root.onclick = e => {
     const open = e.target.closest('[data-open-scene]'); if (open) return ctx.openScene(open.dataset.openScene);
     const lb = e.target.closest('[data-label]'); if (lb) return labelMenu(lb, lb.closest('tr').dataset.id, () => renderOutline(root));
+    const pl = e.target.closest('[data-oplace]'); if (pl) { const it = ctx.state.items.find(i => i.id === pl.closest('tr').dataset.id); return ctx.placeField(it).pick(() => renderOutline(root)); }
   };
   root.onkeydown = e => { if (e.key === 'Enter' && e.target.matches('input')) e.target.blur(); };
 }
 
+const hasPlace = () => !!(ctx.placeField && ctx.placeField({}));
 function rowHtml(s, i) {
   const l = labelOf(s);
   const pct = s.target ? Math.min(100, Math.round((s.words || 0) / s.target * 100)) : null;
@@ -140,6 +143,7 @@ function rowHtml(s, i) {
     <td><input class="o-in o-title" data-f="title" value="${esc(s.title)}" aria-label="Title" maxlength="140"></td>
     <td><span class="o-sel st-${statusOf(s).id}"><select data-f="status" aria-label="Status">${STATUSES.map(x => `<option value="${x.id}" ${statusOf(s).id === x.id ? 'selected' : ''}>${x.name}</option>`).join('')}</select></span></td>
     <td><input class="o-in" data-f="pov" value="${esc(s.pov || '')}" placeholder="—" aria-label="Point of view" maxlength="40"></td>
+    ${hasPlace() ? `<td class="o-pl"><button class="o-place ${ctx.placeField(s).name ? '' : 'empty'}" data-oplace>${esc(ctx.placeField(s).name || '—')}</button></td>` : ''}
     <td class="o-c"><button class="o-dot" data-label style="${l ? `--lbl:${l.color}` : ''}" aria-label="Label: ${l ? l.name : 'none'}"></button></td>
     <td class="o-w tnum">${num(s.words)}${pct !== null ? `<div class="o-bar"><i style="width:${pct}%"></i></div>` : ''}</td>
     <td class="o-t"><input class="o-in tnum" type="number" min="0" step="100" data-f="target" value="${s.target || ''}" placeholder="—" aria-label="Word target"></td>
@@ -168,7 +172,10 @@ export function sceneDetails(id) {
         <div class="field"><label class="field-label" for="sd-pov">Point of view</label><input class="input" id="sd-pov" value="${esc(it.pov || '')}" placeholder="Whose eyes?" maxlength="40"></div>
         <div class="field"><label class="field-label" for="sd-target">Word target</label><input class="input tnum" id="sd-target" type="number" min="0" step="100" value="${it.target || ''}" placeholder="e.g. 1500"></div>
       </div>
-      ${ctx.whenField ? `<div class="field"><span class="field-label">When it happens</span><button class="input when-btn" id="sdWhen">${esc(ctx.whenField(it) || 'Not on the timeline yet')}</button></div>` : ''}
+      ${ctx.whenField || (ctx.placeField && ctx.placeField(it)) ? `<div class="split2">
+        ${ctx.whenField ? `<div class="field"><span class="field-label">When it happens</span><button class="input when-btn" id="sdWhen">${esc(ctx.whenField(it) || 'Not on the timeline yet')}</button></div>` : ''}
+        ${ctx.placeField && ctx.placeField(it) ? `<div class="field"><span class="field-label">Where it happens</span><button class="input when-btn" id="sdWhere">${esc(ctx.placeField(it).name || 'Set a place')}</button></div>` : ''}
+      </div>` : ''}
       <div class="field"><span class="field-label">Label</span><div class="lbl-pop" id="sd-label"><button class="lbl-sw none ${!label ? 'on' : ''}" data-l="" aria-label="No label">${icon('x')}</button>${LABELS.map(l => `<button class="lbl-sw ${label === l.id ? 'on' : ''}" data-l="${l.id}" style="--lbl:${l.color}" aria-label="${l.name}"></button>`).join('')}</div></div>`,
     foot: `<button class="btn btn-ghost" data-open>${icon('pen')}Open in editor</button><button class="btn btn-primary" data-save>Save</button>`
   });
@@ -180,5 +187,6 @@ export function sceneDetails(id) {
   };
   $('[data-save]', s.wrap).onclick = save;
   const wb = $('#sdWhen', s.wrap); if (wb) wb.onclick = async () => { await save(); ctx.whenSheet(id); };
+  const pb = $('#sdWhere', s.wrap); if (pb) pb.onclick = () => ctx.placeField(it).pick(() => { pb.textContent = ctx.placeField(it).name || 'Set a place'; ctx.onChange({ skipView: false }); });
   $('[data-open]', s.wrap).onclick = async () => { await save(); ctx.openScene(id); };
 }

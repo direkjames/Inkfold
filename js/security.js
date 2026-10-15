@@ -18,7 +18,7 @@ async function open_(key, box) { const pt = await crypto.subtle.decrypt({ name: 
 // ---------------------------------------------------------------- project encryption
 const keys = new Map();          // projectId -> CryptoKey (memory only)
 const encrypted = new Set();     // projectIds known to be encrypted
-const SECRET = { items: ['title', 'content', 'synopsis', 'pov', 'data', 'when'], versions: ['title', 'content'] };
+const SECRET = { items: ['title', 'content', 'synopsis', 'pov', 'data', 'when', 'place', 'cast'], versions: ['title', 'content'] };
 export const isEncrypted = p => !!(p && p.enc);
 export const isUnlocked = pid => keys.has(pid);
 

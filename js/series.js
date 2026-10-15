@@ -4,7 +4,23 @@
 import { db, uid } from './db.js';
 import { touch } from './model.js';
 
-export const SHARED_TYPES = ['character', 'place', 'lore', 'rel', 'charTabs'];
+export const SHARED_TYPES = ['character', 'place', 'lore', 'rel', 'charTabs', 'map', 'mapmark'];
+
+// Items point at other items by id (relationships, map marks, a scene's place and cast).
+// When ids change (copies, merges), these references move with them.
+export function remapRefs(it, map) {
+  const m = id => (id && map.get(id)) || id;
+  let changed = false;
+  const set = (o, k) => { if (o && o[k] && map.has(o[k])) { o[k] = map.get(o[k]); changed = true; } };
+  if (it.type === 'rel' && it.data) { it.data = { ...it.data }; set(it.data, 'a'); set(it.data, 'b'); }
+  if (it.type === 'mapmark') { if (it.parentId && map.has(it.parentId)) { it.parentId = map.get(it.parentId); changed = true; } if (it.data) { it.data = { ...it.data }; set(it.data, 'placeId'); set(it.data, 'opensMap'); } }
+  if (it.type === 'scene') {
+    if (it.place && map.has(it.place)) { it.place = m(it.place); changed = true; }
+    if (it.cast) { const c = { in: (it.cast.in || []).map(m), out: (it.cast.out || []).map(m) }; if (JSON.stringify(c) !== JSON.stringify(it.cast)) { it.cast = c; changed = true; } }
+  }
+  if (typeof it.content === 'string' && it.content.includes('data-img=')) { const c = it.content.replace(/data-img="([\w-]+)"/g, (x, id) => `data-img="${m(id)}"`); if (c !== it.content) { it.content = c; changed = true; } }
+  return changed;
+}
 export const isSeries = p => !!(p && p.kind === 'series');
 export const isShared = it => SHARED_TYPES.includes(it.type);
 
@@ -45,7 +61,7 @@ export async function joinSeries(book, seriesId) {
   const theirs = (await db.byProject(seriesId)).filter(i => isShared(i) && !i.deleted);
   const writes = [], removed = [], idMap = new Map();
   let merged = 0;
-  for (const it of mine.filter(i => i.type !== 'rel' && i.type !== 'charTabs')) {
+  for (const it of mine.filter(i => !['rel', 'charTabs', 'map', 'mapmark'].includes(i.type))) {
     const twin = !it.deleted && it.title && theirs.find(t => t.type === it.type && norm(t.title) === norm(it.title));
     if (twin) {
       const d = twin.data = { ...(twin.data || {}) };
@@ -57,6 +73,10 @@ export async function joinSeries(book, seriesId) {
       writes.push(touch(twin)); idMap.set(it.id, twin.id); removed.push(it.id); merged++;
     } else { it.projectId = seriesId; writes.push(touch(it)); }
   }
+  // maps and their marks move into the series too (their place links follow merged entries)
+  for (const it of mine.filter(i => i.type === 'map' || i.type === 'mapmark')) { remapRefs(it, idMap); it.projectId = seriesId; writes.push(touch(it)); }
+  // the book's scenes may point at entries that were merged away
+  if (idMap.size) for (const sc of (await db.byProject(book.id)).filter(i => i.type === 'scene')) if (remapRefs(sc, idMap)) writes.push(touch(sc));
   // relationships: point at the merged entries, skip ones the series already has
   const relKey = r => [r.data.a, r.data.b, r.data.kind].join('|');
   const have = new Set(theirs.filter(t => t.type === 'rel' && t.data).map(relKey));
@@ -89,18 +109,21 @@ export async function joinSeries(book, seriesId) {
 async function copyBibleInto(book, seriesId) {
   const shared = (await db.byProject(seriesId)).filter(i => isShared(i) && !i.deleted);
   const map = new Map(shared.map(i => [i.id, i.type === 'charTabs' ? 'tabs-' + book.id : uid(i.type.slice(0, 2) + '-')]));
-  return shared.map(i => {
+  const items = shared.map(i => {
     const c = { ...i, id: map.get(i.id), projectId: book.id, revs: [] };
-    if (i.type === 'rel' && i.data) c.data = { ...i.data, a: map.get(i.data.a) || i.data.a, b: map.get(i.data.b) || i.data.b };
+    remapRefs(c, map);
     delete c.rev; return touch(c);
   });
+  return { items, map };
 }
 
 export async function leaveSeries(book) {
   const sid = book.seriesId; if (!sid) return;
-  const items = await copyBibleInto(book, sid);
+  const { items, map } = await copyBibleInto(book, sid);
+  // the book's scenes now point at its own copies of places and characters
+  const scenes = (await db.byProject(book.id)).filter(i => i.type === 'scene' && remapRefs(i, map)).map(touch);
   delete book.seriesId; delete book.seriesOrder; touch(book);
-  await db.writeBatch({ projects: [book], items });
+  await db.writeBatch({ projects: [book], items: [...items, ...scenes] });
 }
 
 export async function deleteSeries(series) {
@@ -111,6 +134,7 @@ export async function deleteSeries(series) {
 
 // A plain copy of the shared bible for a standalone project file
 export async function bibleCopyFor(book) {
-  if (!book.seriesId) return [];
-  return (await copyBibleInto(book, book.seriesId)).map(i => { const o = { ...i }; delete o._dec; delete o.enc; return o; });
+  if (!book.seriesId) return { items: [], map: new Map() };
+  const { items, map } = await copyBibleInto(book, book.seriesId);
+  return { items: items.map(i => { const o = { ...i }; delete o._dec; delete o.enc; return o; }), map };
 }

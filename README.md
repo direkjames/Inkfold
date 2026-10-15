@@ -74,6 +74,22 @@ Writing stats are included in backups and Nearby Sync, so they add up across you
 - Editor themes: Paper, Ink, Midnight, Sepia Night, OLED Black, or match your device
 - Better tablet layouts
 
+## What's new in 1.5: Maps
+
+A new **Map** view (next to Write, Board, Outline, Timeline and Bible) for novels, screenplays and journals. Shortcut: Ctrl/Cmd + Shift + the view's number.
+
+- **Your own map pictures**, kept sharp up to 4000 pixels. Several maps per book, shared across a series like the story bible.
+- **Pins** with 14 icons and 10 colours, each linked to a Place in your story bible (or creating one). Click a pin for the place card and the scenes set there.
+- **Maps inside maps**: a pin can open another map (double-click or double-tap it). A breadcrumb leads back.
+- **Labels** (plain, italic serif, or spaced capitals; three sizes; any angle), **regions** (borders and territories with fill and border styles) and **routes** (solid, dashed or dotted, with smooth curves). Drag the dots to reshape; click a small dot to add a point.
+- **Layers** you can show, hide, lock and reorder.
+- **Ruler and scale** in metres and kilometres: set the scale once, then measure distances, see route lengths and travel times on foot, on horseback and by ship (speeds are editable).
+- **Undo and redo** (Ctrl/Cmd + Z, Shift + Z) for everything on the map.
+- **Scene locations**: "Set place" next to "Set time" at the top of each scene, with places mentioned in the scene suggested first. Places show on Board cards, in the Outline and in Scene details. Pins show how many scenes happen there, including scenes on maps inside it.
+- **Character journeys**: pick up to five characters to see their numbered route through the story, in story order (Timeline dates when you have them). A character counts as in a scene when it's from their point of view or they're mentioned by name; the people button at the top of a scene lets you correct it. An "Up to chapter" slider replays the story, and travel checks warn when someone covers too much ground too fast.
+- **Export** a map as a full-size PNG with the visible layers (and journeys, if shown).
+- Place entries in the Bible list "Scenes set here" and "On maps".
+
 ## What's new in 1.4
 
 - **Blank lines stay put.** Empty lines and line breaks you add in a scene are kept when you save, switch scenes, use Markdown mode, and export to Word, PDF, EPUB or Markdown. Importing .txt, .md and .docx keeps them too.
@@ -111,6 +127,7 @@ Writing stats are included in backups and Nearby Sync, so they add up across you
 | `js/level.js` | EXP and levels |
 | `js/series.js` | Series: shared story bible, joining and leaving |
 | `js/images.js` | Pictures in scenes (shrinking, storing, showing) |
+| `js/maps.js` | Maps, pins, labels, regions, routes, layers, ruler, scene places, journeys, map export |
 | `js/sound.js` | Ambient soundscapes and timer chime |
 | `js/ui.js` | Icons, sheets, menus, toasts |
 | `js/libs.js` | Libraries loaded on demand (JSZip, jsPDF, Mammoth, PeerJS, QR) |
