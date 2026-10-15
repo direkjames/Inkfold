@@ -74,6 +74,18 @@ Writing stats are included in backups and Nearby Sync, so they add up across you
 - Editor themes: Paper, Ink, Midnight, Sepia Night, OLED Black, or match your device
 - Better tablet layouts
 
+## What's new in 1.4
+
+- **Blank lines stay put.** Empty lines and line breaks you add in a scene are kept when you save, switch scenes, use Markdown mode, and export to Word, PDF, EPUB or Markdown. Importing .txt, .md and .docx keeps them too.
+- **New chapters show up right away** in the binder, ready to rename (same for new and duplicated scenes).
+- **First names count.** "Luna Valentino" is also found as plain "Luna" in your scenes, hover cards and "Appears in", without adding an alias. If two entries share a first name, it isn't matched on its own and the profile says so. Each character has a switch to turn this off.
+- **Pictures in scenes.** Insert from the toolbar, drag and drop, or paste. Click a picture to resize it (Small, Medium, Large, Full width), add a caption, replace or remove it. Pictures are shrunk automatically and go into Word, PDF, EPUB and Markdown exports.
+- **Series.** Group books into a series ("New series" in the library, or Project details → Series). Books in a series share one story bible: characters, places, lore, relationships and profile tabs. Entries with the same name are merged when a book joins. A book that leaves keeps its own copy. Encrypted projects can't join a series.
+- **Welcome back.** The library shows where you left off, with the last lines you wrote, your words today, your streak and your level.
+- **EXP and levels.** 1 EXP per word written, +25 for each writing day (100+ words), and a growing bonus for days in a row. Level-ups are celebrated. Deleting text never takes EXP away.
+- **Custom profile tabs.** Add tabs like "Royal Titles" to character profiles, with your own fields. A tab can be on every character (shared layout) or only on one.
+- **Family tree, reorganised.** Each generation sits on its own row; couples are joined by one line (a ring for married couples); children hang from the middle of their parents' line; siblings share one bar; married-in partners get a small stub. Circles are coloured by the new Gender field.
+
 ## Files
 
 | File | What it does |
@@ -96,6 +108,9 @@ Writing stats are included in backups and Nearby Sync, so they add up across you
 | `js/palette.js` | Command palette and shortcuts |
 | `js/board.js` | Corkboard, outliner, scene details |
 | `js/stats.js` | Writing log, goals, streaks, deadline planner |
+| `js/level.js` | EXP and levels |
+| `js/series.js` | Series: shared story bible, joining and leaving |
+| `js/images.js` | Pictures in scenes (shrinking, storing, showing) |
 | `js/sound.js` | Ambient soundscapes and timer chime |
 | `js/ui.js` | Icons, sheets, menus, toasts |
 | `js/libs.js` | Libraries loaded on demand (JSZip, jsPDF, Mammoth, PeerJS, QR) |

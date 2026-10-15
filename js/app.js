@@ -12,13 +12,16 @@ import { initTimeline, renderTimeline, whenSheet, whenLabel } from './timeline.j
 import { compileSheet } from './compile.js';
 import * as sec from './security.js';
 import { openPalette, paletteOpen, closePalette, shortcutsSheet } from './palette.js';
-import { sanitizeHtml, htmlWords, htmlToMd, mdToHtml, countWords, blocksToHtml, plainToBlocks, htmlToBlocks } from './text.js';
+import { sanitizeHtml, htmlWords, htmlToMd, mdToHtml, countWords, blocksToHtml, plainToBlocks, htmlToBlocks, imgHtml, htmlToText } from './text.js';
 import * as io from './io.js';
+import { compressImage, newImageItem, hydrateImages, IMG_SIZES } from './images.js';
+import * as series from './series.js';
+import { computeExp, EXP_RULES } from './level.js';
 import * as sync from './sync.js';
 import { loadLib, LIBS } from './libs.js';
 import { ICONS, icon, MARK, $, $$, esc, num, el, debounce, ago, haptic, toast, errorToast, closePop, popOpen, popover, menu, sheets, sheet, confirmSheet } from './ui.js';
 
-const VERSION = '1.3.0';
+const VERSION = '1.4.0';
 
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape') {
@@ -74,18 +77,23 @@ function ring(p, size = 28, stroke = 3) {
 }
 
 // ---------------------------------------------------------------- State
-const state = { projects: [], project: null, items: [], scene: null, dirty: false, installEvt: null, device: null, view: 'write', sprint: null, today: 0 };
+const state = { projects: [], project: null, series: null, items: [], scene: null, dirty: false, installEvt: null, device: null, view: 'write', sprint: null, today: 0 };
 
 // ---------------------------------------------------------------- Library
 async function renderLibrary() {
   document.title = 'Inkfold';
   const lib = $('#library');
-  const projects = (await db.all('projects')).filter(p => !p.deleted)
+  const everything = (await db.all('projects')).filter(p => !p.deleted);
+  const seriesList = everything.filter(series.isSeries).sort((a, b) => (a.title || '').localeCompare(b.title || ''));
+  const projects = everything.filter(p => !series.isSeries(p))
     .sort((a, b) => (b.lastEdited || b.updatedAt) - (a.lastEdited || a.updatedAt));
   state.projects = projects;
   const pstats = await Promise.all(projects.map(p => projectStats(p.id)));
   const total = pstats.reduce((s, x) => s + x.words, 0);
   const sum = await stats.summary(settings.dailyGoal);
+  const xp = computeExp(sum.byDay);
+  noteLevel(xp, false);
+  const welcome = await lastPlace(projects);
   const lastBackup = await db.meta('lastBackup');
   const backupAge = lastBackup ? Date.now() - lastBackup.at : Infinity;
   const fresh = backupAge < 3 * 864e5;
@@ -117,22 +125,29 @@ async function renderLibrary() {
     <section class="lib-hero">
       <div>
         <div class="eyebrow">Your library</div>
-        <h1>${projects.length ? 'Pick up <em>where you left off.</em>' : 'Every book starts <em>on a blank page.</em>'}</h1>
+        <h1>${welcome ? `${greeting()}, <em>welcome back.</em>` : projects.length ? 'Pick up <em>where you left off.</em>' : 'Every book starts <em>on a blank page.</em>'}</h1>
         <div class="sum tnum">${projects.length} project${projects.length === 1 ? '' : 's'} · ${num(total)} words in your manuscripts</div>
-        <button class="today-row" data-act="stats">
-          ${ring(sum.today / settings.dailyGoal, 30)}
-          <span class="tnum"><b>${num(sum.today)}</b> of ${num(settings.dailyGoal)} words today</span>
-          ${sum.streak ? `<span class="streak tnum">${icon('flame')}${sum.streak}-day streak</span>` : ''}
-        </button>
       </div>
       <div class="lib-hero-actions">
         <button class="btn btn-quiet" data-act="import">${icon('upload')}Import</button>
+        <button class="btn btn-quiet" data-act="new-series">${icon('stack')}New series</button>
         <button class="btn btn-primary" data-act="new">${icon('plus')}New project</button>
       </div>
     </section>
+    ${welcomeHtml(welcome, sum, xp)}
     ${banner}
+    ${seriesList.map(sr => {
+      const books = projects.map((p, i) => ({ p, st: pstats[i] })).filter(x => x.p.seriesId === sr.id).sort((a, b) => (a.p.seriesOrder ?? 1e9) - (b.p.seriesOrder ?? 1e9) || (a.p.createdAt || 0) - (b.p.createdAt || 0));
+      const words = books.reduce((n, x) => n + x.st.words, 0);
+      return `<section class="series-block">
+        <div class="series-head"><span class="series-ic">${icon('stack')}</span><div class="sh-text"><span class="eyebrow">Series</span><h2>${esc(sr.title)}</h2><span class="tnum">${books.length} book${books.length === 1 ? '' : 's'} · ${num(words)} words · shared characters, places and lore</span></div><button class="btn btn-quiet btn-sm" data-series="${sr.id}">${icon('edit')}<span class="hide-narrow">Manage</span></button></div>
+        <div class="shelf">${books.map(x => coverHtml(x.p, x.st, books.indexOf(x) + 1)).join('')}
+          <button class="book" data-series-add="${sr.id}" aria-label="Add a book to ${esc(sr.title)}"><div class="cover new"><div class="plus">${icon('plus')}</div><b>Add a book</b></div><div class="b-meta"><span>&nbsp;</span></div></button></div>
+      </section>`;
+    }).join('')}
+    ${seriesList.length ? `<div class="shelf-label"><span class="eyebrow">Standalone books</span></div>` : ''}
     <section class="shelf">
-      ${projects.map((p, i) => coverHtml(p, pstats[i])).join('')}
+      ${projects.map((p, i) => ({ p, st: pstats[i] })).filter(x => !x.p.seriesId || !seriesList.some(sr => sr.id === x.p.seriesId)).map(x => coverHtml(x.p, x.st)).join('')}
       <button class="book" data-act="new" aria-label="New project"><div class="cover new"><div class="plus">${icon('plus')}</div><b>New project</b></div><div class="b-meta"><span>&nbsp;</span></div></button>
     </section>
     <footer class="lib-foot"><span>${icon('shield')}Private and offline. Your writing never leaves this device unless you sync or export it.</span><span>Inkfold ${VERSION}</span></footer>
@@ -140,11 +155,14 @@ async function renderLibrary() {
 
   applySettings();
   lib.onclick = async e => {
-    const b = e.target.closest('[data-act], [data-open]');
+    const b = e.target.closest('[data-act], [data-open], [data-series], [data-series-add]');
     if (!b) return;
-    if (b.dataset.open) return openProject(b.dataset.open);
+    if (b.dataset.open) return openProject(b.dataset.open, b.dataset.scene || undefined);
+    if (b.dataset.series) return seriesSheet(b.dataset.series);
+    if (b.dataset.seriesAdd) return seriesSheet(b.dataset.seriesAdd, true);
     const a = b.dataset.act;
     if (a === 'new') newProjectSheet();
+    else if (a === 'new-series') seriesSheet(null);
     else if (a === 'import') pickFile();
     else if (a === 'settings') settingsSheet();
     else if (a === 'sync') syncSheet();
@@ -152,6 +170,7 @@ async function renderLibrary() {
     else if (a === 'backup') doBackup();
     else if (a === 'backup-status') settingsSheet('data');
     else if (a === 'stats') statsSheet();
+    else if (a === 'level') levelSheet();
     else if (a === 'theme') toggleTheme();
     else if (a === 'folder-grant') {
       try { const { dir } = await io.folderPermission(); if ((await dir.requestPermission({ mode: 'readwrite' })) === 'granted') { await io.writeFolderBackup(dir); toast('Backed up to your folder'); renderLibrary(); } }
@@ -160,7 +179,69 @@ async function renderLibrary() {
   };
 }
 
-function coverHtml(p, st) {
+// ---------- Welcome back ----------
+const greeting = () => { const h = new Date().getHours(); return h < 5 ? 'Late night' : h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening'; };
+// The scene you were last writing, with the last lines of it
+async function lastPlace(projects) {
+  const pid = await db.meta('lastProject');
+  const p = projects.find(x => x.id === pid) || projects.filter(x => !x.sample).sort((a, b) => (b.lastEdited || 0) - (a.lastEdited || 0))[0];
+  if (!p || (p.sample && !p.lastEdited)) return null;
+  const sid = await db.meta('lastScene:' + p.id);
+  const locked = p.enc && !sec.isUnlocked(p.id);
+  let sc = sid ? await db.get('items', sid) : null;
+  if (!sc || sc.deleted || sc.projectId !== p.id) sc = null;
+  let excerpt = '';
+  if (sc && !locked) {
+    const text = htmlToText(sc.content || '').replace(/\s+/g, ' ').trim();
+    if (text.length > 260) { const cut = text.slice(-260); excerpt = '…' + cut.slice(cut.indexOf(' ') + 1); } else excerpt = text;
+  }
+  return { p, sc, excerpt, locked, at: (sc && sc.updatedAt) || p.lastEdited || p.updatedAt };
+}
+function welcomeHtml(w, sum, xp) {
+  const goal = settings.dailyGoal;
+  const tiles = `<div class="wb-stats">
+      <button class="wb-tile" data-act="stats">${ring(sum.today / goal, 44, 4)}<span><b class="tnum">${num(sum.today)}<small> / ${num(goal)}</small></b><span>words today</span></span></button>
+      <button class="wb-tile" data-act="stats"><span class="wb-ic flame">${icon('flame')}</span><span><b class="tnum">${sum.streak}<small> day${sum.streak === 1 ? '' : 's'}</small></b><span>${sum.streak ? 'writing streak' : 'start a streak today'} · best ${sum.best}</span></span></button>
+      <button class="wb-tile wb-level" data-act="level"><span class="lv-badge"><small>Lv</small>${xp.level}</span><span class="lv-text"><b>${esc(xp.title)}</b><span class="lv-bar"><i style="width:${Math.max(2, xp.pct * 100)}%"></i></span><span class="tnum">${num(xp.into)} / ${num(xp.need)} EXP to level ${xp.level + 1}</span></span></button>
+    </div>`;
+  if (!w) return `<section class="welcome solo">${tiles}</section>`;
+  const where = w.sc ? `<b>${esc(w.sc.title || 'Untitled scene')}</b> in <i>${esc(w.p.title)}</i>` : `<i>${esc(w.p.title)}</i>`;
+  return `<section class="welcome">
+    <div class="wb-main">
+      <span class="eyebrow">Where you left off · ${ago(w.at)}</span>
+      <p class="wb-where">${where}</p>
+      ${w.locked ? `<p class="wb-excerpt locked">${icon('lock')}This project is encrypted. Unlock it to see your last lines.</p>`
+        : w.excerpt ? `<blockquote class="wb-excerpt">${esc(w.excerpt)}</blockquote>` : `<p class="wb-excerpt empty">This scene is still a blank page.</p>`}
+      <button class="btn btn-primary" data-open="${w.p.id}" ${w.sc ? `data-scene="${w.sc.id}"` : ''}>${icon('pen')}Continue writing</button>
+    </div>
+    ${tiles}
+  </section>`;
+}
+// Level-ups: celebrate when the level goes past the last one seen on this device
+async function noteLevel(xp, celebrateIt = true) {
+  const seen = await db.meta('levelSeen');
+  if (seen === null || seen === undefined) { await db.setMeta('levelSeen', xp.level); return; }
+  if (xp.level > seen) {
+    await db.setMeta('levelSeen', xp.level);
+    if (celebrateIt) celebrate(`Level ${xp.level} · ${xp.title}`, `You’ve earned ${num(xp.exp)} EXP from your writing.`);
+  }
+}
+function levelSheet() {
+  stats.summary(settings.dailyGoal).then(sum => {
+    const xp = computeExp(sum.byDay), R = EXP_RULES;
+    sheet({ title: 'Level & EXP', foot: null, body: `
+      <div class="lv-hero"><span class="lv-badge big"><small>Lv</small>${xp.level}</span><div><b>${esc(xp.title)}</b><span class="tnum">${num(xp.exp)} EXP in total</span></div></div>
+      <div class="lv-bar big"><i style="width:${Math.max(2, xp.pct * 100)}%"></i></div>
+      <p class="note tnum" style="text-align:left">${num(xp.need - xp.into)} EXP to level ${xp.level + 1}${xp.nextTitle ? `, where you become <b>${esc(xp.nextTitle)}</b>` : ''}.</p>
+      <div class="group"><div class="group-title">How you earn EXP</div><div class="card-list">
+        <div class="li"><div class="li-icon">${icon('pen')}</div><div class="li-text"><b>${R.perWord} EXP for every word you write</b><span>Deleting or rewriting never takes EXP away</span></div></div>
+        <div class="li"><div class="li-icon">${icon('calendar')}</div><div class="li-text"><b>+${R.writingDay} EXP for each writing day</b><span>Any day with at least ${R.writingDayMin} new words</span></div></div>
+        <div class="li"><div class="li-icon">${icon('flame')}</div><div class="li-text"><b>+${R.streakStep} EXP more for each day in a row</b><span>Up to +${R.streakStep * R.streakCap} EXP a day on a long run</span></div></div>
+      </div></div>` });
+  });
+}
+
+function coverHtml(p, st, bookNo) {
   const c = COVERS[p.cover % COVERS.length] || COVERS[0];
   return `<button class="book" data-open="${p.id}" aria-label="Open ${esc(p.title)}">
     ${p.coverImage ? `<div class="cover has-img" style="--cbg:${c.bg};background-image:url('${p.coverImage}')"></div>` : `<div class="cover" style="--cbg:${c.bg};--cfg:${c.fg};--cline:${c.line}">
@@ -170,7 +251,7 @@ function coverHtml(p, st) {
       <div class="c-foot"><span>${esc(p.author || '')}</span><svg class="c-fold" viewBox="0 0 16 16"><path d="M3 2h7l3 3v9H3z" fill="none" stroke="currentColor" stroke-width="1"/><path d="M10 2v3h3" fill="none" stroke="currentColor" stroke-width="1"/></svg></div>
     </div>`}
     ${p.enc ? `<span class="cover-lock" title="Encrypted">${icon('lock')}</span>` : ''}
-    <div class="b-meta"><b>${esc(p.title)}${p.sample ? '<span class="tag-sample">Sample</span>' : ''}</b><span class="tnum">${num(st.words)} words · ${ago(p.lastEdited || p.updatedAt)}</span></div>
+    <div class="b-meta">${bookNo ? `<span class="book-no">Book ${bookNo}</span>` : ''}<b>${esc(p.title)}${p.sample ? '<span class="tag-sample">Sample</span>' : ''}</b><span class="tnum">${num(st.words)} words · ${ago(p.lastEdited || p.updatedAt)}</span></div>
   </button>`;
 }
 
@@ -206,6 +287,62 @@ function newProjectSheet() {
   $('#np-title').onkeydown = e => { if (e.key === 'Enter') create(); };
 }
 
+// ---------------------------------------------------------------- Series
+// Create or manage a series: its name, its books (in order), adding standalone books, deleting it.
+async function seriesSheet(seriesId, focusAdd = false) {
+  const all = (await db.all('projects')).filter(p => !p.deleted);
+  const sr = seriesId ? all.find(p => p.id === seriesId) : null;
+  const books = sr ? await series.booksIn(sr.id) : [];
+  const free = all.filter(p => !series.isSeries(p) && (!p.seriesId || !all.some(x => x.id === p.seriesId && series.isSeries(x))));
+  const row = (p, inSeries, i) => `<div class="li sr-book" data-pid="${p.id}">
+      <div class="sr-cover" style="background:${p.coverImage ? `center/cover url('${p.coverImage}')` : (COVERS[p.cover % COVERS.length] || COVERS[0]).bg}"></div>
+      <div class="li-text"><b>${inSeries ? `<span class="sr-no">Book ${i + 1}</span>` : ''}${esc(p.title)}</b><span>${p.enc ? 'Encrypted, can’t join a series' : MODES[modeOf(p)].name}</span></div>
+      ${inSeries ? `<button class="icon-btn" data-up="${p.id}" aria-label="Move earlier" ${i === 0 ? 'disabled' : ''}>${icon('chev')}</button><button class="btn btn-ghost btn-sm" data-out="${p.id}">Remove</button>`
+        : `<button class="switch" role="switch" aria-checked="false" data-pick="${p.id}" ${p.enc ? 'disabled' : ''} aria-label="Add ${esc(p.title)}"></button>`}
+    </div>`;
+  const s = sheet({
+    title: sr ? 'Manage series' : 'New series',
+    sub: 'Books in a series share one story bible: characters, places, lore and relationships. Edit Luna in Book 1 and she’s updated in Book 2.',
+    body: `<div class="field"><label class="field-label" for="sr-title">Series name</label><input class="input" id="sr-title" value="${esc(sr ? sr.title : '')}" placeholder="The Valentino Saga" maxlength="120"></div>
+      ${sr ? `<div class="group"><div class="group-title">Books in this series</div><div class="card-list">${books.length ? books.map((p, i) => row(p, true, i)).join('') : '<div class="empty-note">No books yet. Add some below.</div>'}</div></div>` : ''}
+      <div class="group" id="sr-add"><div class="group-title">${sr ? 'Add books' : 'Books to put in it'}</div><div class="card-list">${free.length ? free.map(p => row(p, false)).join('') : '<div class="empty-note">Every book is already in a series. Create a new project to add one.</div>'}</div>
+      <p class="note" style="text-align:left">When a book joins, its characters, places and lore move into the series. If the series already has an entry with the same name, the two are merged into one.</p></div>`,
+    foot: `${sr ? '<button class="btn btn-danger" data-del>Delete series</button><span style="flex:1"></span>' : ''}<button class="btn btn-ghost" data-c>Cancel</button><button class="btn btn-primary" data-save>${sr ? 'Save' : 'Create series'}</button>`,
+  });
+  if (focusAdd) setTimeout(() => $('#sr-add', s.wrap)?.scrollIntoView({ block: 'start' }), 80);
+  else if (!sr) setTimeout(() => $('#sr-title', s.wrap).focus(), 60);
+  const picked = new Set(), out = new Set(); let order = books.map(b => b.id);
+  $$('[data-pick]', s.wrap).forEach(b => b.onclick = () => { const id = b.dataset.pick; if (picked.has(id)) picked.delete(id); else picked.add(id); b.setAttribute('aria-checked', picked.has(id)); });
+  $$('[data-out]', s.wrap).forEach(b => b.onclick = () => { const id = b.dataset.out; const r = b.closest('.sr-book'); if (out.has(id)) { out.delete(id); r.classList.remove('leaving'); b.textContent = 'Remove'; } else { out.add(id); r.classList.add('leaving'); b.textContent = 'Keep'; } });
+  $$('[data-up]', s.wrap).forEach(b => b.onclick = () => { const id = b.dataset.up, i = order.indexOf(id); if (i > 0) { [order[i - 1], order[i]] = [order[i], order[i - 1]]; const r = b.closest('.sr-book'); r.parentNode.insertBefore(r, r.previousElementSibling); $$('.sr-book', s.wrap).filter(x => order.includes(x.dataset.pid)).forEach((x, k) => { const n = $('.sr-no', x); if (n) n.textContent = `Book ${k + 1}`; const up = $('[data-up]', x); if (up) up.disabled = k === 0; }); } });
+  $('[data-c]', s.wrap).onclick = s.close;
+  const del = $('[data-del]', s.wrap);
+  if (del) del.onclick = async () => {
+    if (!(await confirmSheet({ title: `Delete “${esc(sr.title)}”?`, sub: 'The books stay in your library. Each one keeps its own copy of the story bible, so nothing is lost. The series goes to Trash for 30 days.', confirm: 'Delete series', danger: true }))) return;
+    await saveNow(); await series.deleteSeries(sr); s.close(); toast('Series deleted. Each book kept a copy of the story bible.'); refreshAfterDataChange();
+  };
+  $('[data-save]', s.wrap).onclick = async () => {
+    const title = $('#sr-title', s.wrap).value.trim();
+    if (!sr && !title) { $('#sr-title', s.wrap).focus(); return toast('Give the series a name'); }
+    await saveNow();
+    const t = toast('Updating the series…', null, 0);
+    try {
+      let rec = sr;
+      if (!rec) { rec = series.newSeriesRecord(title); await db.put('projects', rec); }
+      else if (title && title !== rec.title) { rec.title = title; touch(rec); await db.put('projects', rec); }
+      let merged = 0;
+      for (const id of picked) { const b = await db.get('projects', id); if (b && !b.enc) { const r = await series.joinSeries(b, rec.id); merged += r.merged; } }
+      for (const id of out) { const b = await db.get('projects', id); if (b) await series.leaveSeries(b); }
+      // book order
+      const keep = order.filter(id => !out.has(id));
+      for (let i = 0; i < keep.length; i++) { const b = await db.get('projects', keep[i]); if (b && b.seriesOrder !== i + 1) { b.seriesOrder = i + 1; touch(b); await db.put('projects', b); } }
+      t(); s.close(); haptic(10);
+      toast(merged ? `Series saved. ${merged} matching entr${merged === 1 ? 'y was' : 'ies were'} merged.` : (sr ? 'Series saved' : `“${rec.title}” created`));
+      refreshAfterDataChange();
+    } catch (e) { t(); errorToast(e); }
+  };
+}
+
 // ---------------------------------------------------------------- Workspace
 async function openProject(id, sceneId) {
   const p = await db.get('projects', id);
@@ -217,7 +354,9 @@ async function openProject(id, sceneId) {
   }
   resetCalendar();
   state.project = p;
-  state.items = await db.byProject(id);
+  state.series = p.seriesId ? await db.get('projects', p.seriesId) : null;
+  if (state.series && state.series.deleted) state.series = null;
+  state.items = await series.loadItems(p);
   const tree = buildTree(state.items);
   const scenes = flatScenes(tree);
   const last = sceneId || (await db.meta('lastScene:' + id));
@@ -227,7 +366,7 @@ async function openProject(id, sceneId) {
     const ch = existing ? state.items.find(i => i.id === existing.id) : newChapter(id, 1, 'Chapter One');
     scene = newScene(id, ch.id, 1, 'Scene 1');
     await db.writeBatch({ items: existing ? [scene] : [ch, scene] });
-    state.items = await db.byProject(id);
+    state.items = await series.loadItems(p);
   }
   await db.setMeta('lastProject', id);
   $('#library').hidden = true;
@@ -274,7 +413,8 @@ function renderWorkspace() {
           ${mode === 'screenplay' ? '' : `${mode === 'poetry' ? `<button class="icon-btn ${state.project.align === 'center' ? 'on' : ''}" data-act="poem-align" title="Centre the poem" aria-label="Centre the poem">${icon('align')}</button><button class="icon-btn syl-btn ${settings.syllables ? 'on' : ''}" data-act="syllables" title="Syllable counts" aria-label="Syllable counts"><span class="h">7</span></button>` : `<button class="icon-btn" data-fmt="heading" title="Heading (# then space)" aria-label="Heading"><span class="h">H</span></button>
           <button class="icon-btn" data-fmt="quote" title="Quote (> then space)" aria-label="Quote">${icon('quote')}</button>
           <button class="icon-btn" data-fmt="list" title="List (- then space)" aria-label="List">${icon('list')}</button>`}
-          <button class="icon-btn" data-fmt="break" title="${mode === 'poetry' ? 'Section break' : 'Scene break (*** then Enter)'}" aria-label="Scene break"><span class="ast">⁂</span></button>`}
+          <button class="icon-btn" data-fmt="break" title="${mode === 'poetry' ? 'Section break' : 'Scene break (*** then Enter)'}" aria-label="Scene break"><span class="ast">⁂</span></button>
+          <button class="icon-btn" data-fmt="image" title="Insert a picture (or drop / paste one)" aria-label="Insert a picture">${icon('image')}</button>`}
           <button class="icon-btn" data-fmt="comment" title="Add a margin note" aria-label="Add a margin note">${icon('comment')}</button>
         </div>
         <span class="rev-ind" id="revIndicator" hidden></span>
@@ -355,7 +495,8 @@ async function renderGoalStrip() {
   const strip = $('#goalStrip'); if (!strip) return;
   const sum = await stats.summary(settings.dailyGoal);
   state.today = sum.today;
-  strip.innerHTML = `${ring(sum.today / settings.dailyGoal, 34, 3.2)}<span class="gs-text"><b class="tnum">${num(sum.today)} <small>/ ${num(settings.dailyGoal)}</small></b><span>${sum.today >= settings.dailyGoal ? 'Goal reached today' : 'words today'}${sum.streak ? ` · ${sum.streak}-day streak` : ''}</span></span>`;
+  const xp = computeExp(sum.byDay);
+  strip.innerHTML = `${ring(sum.today / settings.dailyGoal, 34, 3.2)}<span class="gs-text"><b class="tnum">${num(sum.today)} <small>/ ${num(settings.dailyGoal)}</small></b><span>${sum.today >= settings.dailyGoal ? 'Goal reached today' : 'words today'}${sum.streak ? ` · ${sum.streak}-day streak` : ''}</span></span><span class="gs-lv" title="${esc(xp.title)} · ${num(xp.into)} / ${num(xp.need)} EXP"><small>Lv</small>${xp.level}<i style="--p:${xp.pct * 100}%"></i></span>`;
   const p = state.project, ts = $('#targetStrip');
   if (p && p.target && ts) {
     const words = state.items.filter(i => i.type === 'scene' && !i.deleted).reduce((s, i) => s + (i.words || 0), 0);
@@ -442,8 +583,9 @@ async function onWorkspaceClick(e) {
     { k: 'edit', icon: 'edit', label: 'Project details', run: projectSheet },
     { k: 'export', icon: 'export', label: 'Export…', run: exportSheet },
     { k: 'file', icon: 'share', label: 'Share project file (.inkfold)', run: () => io.exportProjectFile(state.project.id).catch(errorToast) },
+    { k: 'series', icon: 'stack', label: state.series ? `Series: ${state.series.title}` : 'Add to a series…', run: () => state.series ? seriesSheet(state.series.id) : projectSheet('series') },
     '-',
-    ...(state.project.enc ? [
+    ...(state.project.seriesId ? [] : state.project.enc ? [
       { k: 'lockp', icon: 'lock', label: 'Lock project now', run: async () => { await saveNow(); sec.lockProject(state.project.id); goLibrary(); toast('Project locked'); } },
       { k: 'pw', icon: 'edit', label: 'Change password', run: changeProjectPassword },
       { k: 'decrypt', icon: 'unlock', label: 'Remove encryption', run: removeEncryption },
@@ -508,6 +650,9 @@ async function addChapter({ stay = false } = {}) {
   state.items.push(ch, sc); haptic();
   if (stay && state.view !== 'write') { renderBinder(); renderCurrentView(); return; }
   await loadScene(sc.id);
+  renderBinder(); if (state.view !== 'write') renderCurrentView(); // the binder has to be redrawn or the new chapter only shows up after something else redraws it
+  const row = $(`#binderList .row[data-id="${ch.id}"]`);
+  if (row) row.scrollIntoView({ block: 'nearest' });
   renameInline(ch.id);
 }
 async function addScene(chapterId, { stay = false } = {}) {
@@ -517,14 +662,20 @@ async function addScene(chapterId, { stay = false } = {}) {
   if (stay && state.view !== 'write') { renderBinder(); renderCurrentView(); sceneDetails(sc.id); return; }
   if (state.view !== 'write') await setView('write');
   await loadScene(sc.id);
+  openChapter(chapterId); renderBinder();
   $('#sceneTitle').focus(); $('#sceneTitle').select();
+}
+// make sure a chapter is expanded in the binder (e.g. after adding a scene to a collapsed one)
+function openChapter(id) {
+  const key = 'closed:' + state.project.id;
+  try { const closed = JSON.parse(sessionStorage.getItem(key) || '[]').filter(x => x !== id); sessionStorage.setItem(key, JSON.stringify(closed)); } catch {}
 }
 async function duplicateScene(id) {
   await saveNow();
   const src = state.items.find(i => i.id === id);
   const sc = newScene(state.project.id, src.parentId, src.order + 0.5, src.title + ' (copy)', src.content);
   await db.put('items', sc); state.items.push(sc);
-  await loadScene(sc.id); toast('Scene duplicated');
+  await loadScene(sc.id); renderBinder(); toast('Scene duplicated');
 }
 async function trashItem(id) {
   await saveNow();
@@ -620,7 +771,7 @@ async function loadScene(id) {
   const ed = $('#editor'), md = $('#mdEditor');
   ed.hidden = isMd(); md.hidden = !isMd();
   if (isMd()) { md.value = htmlToMd(sc.content || ''); autoGrow(md); }
-  else ed.innerHTML = sc.content || (modeOf(state.project) === 'screenplay' ? '<p data-el="heading"><br></p>' : modeOf(state.project) === 'poetry' ? '<p><br></p>' : '');
+  else { ed.innerHTML = sc.content || (modeOf(state.project) === 'screenplay' ? '<p data-el="heading"><br></p>' : modeOf(state.project) === 'poetry' ? '<p><br></p>' : ''); hydrateImages(ed, state.items); }
   updateSyllables(); updateElementLabel(); markEmpty();
   $$('#binderList .scene-row').forEach(r => r.classList.toggle('active', r.dataset.id === id));
   updateCrumbs(); updateCounts();
@@ -651,7 +802,7 @@ function updateCrumbs() {
 }
 
 function currentHtml() { return isMd() ? mdToHtml($('#mdEditor').value) : sanitizeHtml($('#editor').innerHTML); }
-function liveWords() { return isMd() ? countWords($('#mdEditor').value.replace(/[#>*_\-`]/g, ' ')) : countWords($('#editor').innerText); }
+function liveWords() { return isMd() ? countWords($('#mdEditor').value.replace(/!\[[^\]]*\]\([^)]*\)/g, ' ').replace(/[#>*_\-`]/g, ' ')) : countWords($('#editor').innerText); }
 
 function updateCounts() {
   const w = state.scene ? liveWords() : 0;
@@ -711,7 +862,7 @@ async function goLibrary() {
 
 // ---------- Project encryption ----------
 async function reloadItems() {
-  state.items = await db.byProject(state.project.id);
+  state.items = await series.loadItems(state.project);
   if (state.scene) state.scene = state.items.find(i => i.id === state.scene.id) || state.scene;
   renderBinder();
 }
@@ -769,6 +920,7 @@ function paletteItems() {
     A('Nearby Sync', 'sync', syncSheet);
   }
   A('Goals & stats', 'chart', statsSheet, null, 'streak heatmap');
+  A('Level & EXP', 'star', levelSheet, null, 'xp experience level up');
   A(isDark() ? 'Switch to Paper (light)' : 'Switch to dark theme', isDark() ? 'sun' : 'moon', toggleTheme, null, 'theme dark light');
   A('Settings', 'settings', settingsSheet);
   A('Keyboard shortcuts', 'keyboard', shortcutsSheet, 'Mod+/');
@@ -822,7 +974,10 @@ async function afterWordsAdded(delta, before, sc) {
   if (prevToday < goal && state.today >= goal) celebrate('Daily goal reached', `${num(goal)} words today. Lovely work.`);
   else if (sc.target && before < sc.target && sc.words >= sc.target) celebrate('Scene target reached', `“${sc.title}” hit ${num(sc.target)} words.`, true);
   renderGoalStrip();
+  levelCheckSoon();
 }
+
+const levelCheckSoon = debounce(async () => { const sum = await stats.summary(settings.dailyGoal); noteLevel(computeExp(sum.byDay)); }, 1500);
 
 function celebrate(title, sub, small = false) {
   haptic([12, 60, 18]);
@@ -961,6 +1116,8 @@ function bindEditor() {
   });
   ed.addEventListener('paste', e => {
     e.preventDefault();
+    const pics = [...(e.clipboardData.files || [])].filter(f => /^image\//.test(f.type));
+    if (pics.length && modeOf(state.project) !== 'screenplay') { pics.forEach(f => insertImage(f)); return; }
     const html = e.clipboardData.getData('text/html');
     const text = e.clipboardData.getData('text/plain');
     let out = html ? sanitizeHtml(html) : blocksToHtml(plainToBlocks(text)) || esc(text);
@@ -976,8 +1133,23 @@ function bindEditor() {
     }
     document.execCommand('insertHTML', false, out);
   });
-  ed.addEventListener('drop', e => { if (e.dataTransfer && e.dataTransfer.files.length) e.preventDefault(); });
-  ed.addEventListener('click', e => { const m = e.target.closest('mark.cmt'); if (m) revise.focusNote(m.dataset.c); });
+  ed.addEventListener('drop', e => {
+    if (!(e.dataTransfer && e.dataTransfer.files.length)) return;
+    e.preventDefault();
+    const pics = [...e.dataTransfer.files].filter(f => /^image\//.test(f.type));
+    if (!pics.length || modeOf(state.project) === 'screenplay') return;
+    const r = document.caretRangeFromPoint ? document.caretRangeFromPoint(e.clientX, e.clientY) : null;
+    if (r && ed.contains(r.startContainer)) { const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r); }
+    pics.forEach(f => insertImage(f));
+  });
+  ed.addEventListener('click', e => {
+    const m = e.target.closest('mark.cmt'); if (m) revise.focusNote(m.dataset.c);
+    const fig = e.target.closest('figure[data-img]'); if (fig) imageMenu(fig);
+  });
+  md.addEventListener('drop', e => {
+    const pics = e.dataTransfer ? [...e.dataTransfer.files].filter(f => /^image\//.test(f.type)) : [];
+    if (!pics.length) return; e.preventDefault(); pics.forEach(f => insertImage(f));
+  });
   // character hover cards
   let raf = 0;
   ed.addEventListener('mousemove', e => { cancelAnimationFrame(raf); raf = requestAnimationFrame(() => nameHover(e.clientX, e.clientY)); });
@@ -1011,6 +1183,75 @@ function nameHover(x, y) {
   hideHover();
 }
 
+// ---------- Pictures in scenes ----------
+function pickImage() {
+  const fi = el('<input type="file" accept="image/*" multiple hidden>');
+  // remember where the caret was, the file picker takes focus away
+  const sel = getSelection(); const keep = sel.rangeCount && $('#editor').contains(sel.anchorNode) ? sel.getRangeAt(0).cloneRange() : null;
+  fi.onchange = async () => { const files = [...fi.files]; fi.remove(); for (const f of files) await insertImage(f, keep); };
+  document.body.appendChild(fi); // some mobile browsers only open the picker for inputs that are on the page
+  fi.click();
+}
+async function insertImage(file, range = null) {
+  if (!state.scene) return;
+  let data;
+  try { data = await compressImage(file); } catch (e) { return errorToast(e); }
+  const it = newImageItem(state.project.id, state.scene.id, data);
+  await db.put('items', it); state.items.push(it);
+  if (isMd()) {
+    const ta = $('#mdEditor'); ta.focus();
+    document.execCommand('insertText', false, `\n\n![](inkfold-image:${it.id})\n\n`);
+    toast('Picture added. It shows in the rich-text editor and in exports.');
+    return;
+  }
+  const ed = $('#editor'); ed.focus();
+  const sel = getSelection();
+  if (range) { sel.removeAllRanges(); sel.addRange(range); }
+  // the picture goes after the paragraph the caret is in (or replaces it if it's empty); writing carries on below it
+  let block = sel.rangeCount ? sel.anchorNode : null;
+  while (block && block.parentNode !== ed) block = block.parentNode;
+  if (block && block.nodeType !== 1) block = null;
+  const tpl = document.createElement('template');
+  tpl.innerHTML = imgHtml({ img: it.id, w: data.w < 500 ? 55 : 100 });
+  const fig = tpl.content.firstChild;
+  const emptyP = n => n && n.tagName === 'P' && !n.textContent.trim() && !n.querySelector('img');
+  if (block && emptyP(block)) block.replaceWith(fig);
+  else if (block) block.after(fig);
+  else ed.appendChild(fig);
+  let next = fig.nextElementSibling;
+  if (!emptyP(next)) { next = document.createElement('p'); next.innerHTML = '<br>'; fig.after(next); }
+  const r = document.createRange(); r.setStart(next, 0); r.collapse(true); sel.removeAllRanges(); sel.addRange(r);
+  hydrateImages(ed, state.items);
+  changed(); haptic(8);
+  requestAnimationFrame(centerCaret);
+}
+function imageMenu(fig) {
+  const cur = +fig.dataset.w || 100;
+  const p = popover(fig, `<div class="type-panel img-panel">
+    <div><h4>Picture size</h4><div class="seg" id="imSize">${IMG_SIZES.map(z => `<button data-w="${z.w}" class="${Math.abs(cur - z.w) < 6 ? 'on' : ''}">${z.name}</button>`).join('')}</div></div>
+    <div class="field" style="margin:0"><label class="field-label" for="imCap" style="margin:0">Caption</label><input class="input" id="imCap" value="${esc(fig.dataset.cap || '')}" placeholder="Optional" maxlength="300"></div>
+    <div style="display:flex;gap:8px;justify-content:space-between"><button class="btn btn-ghost btn-sm" id="imReplace">${icon('image')}Replace</button><button class="btn btn-danger btn-sm" id="imRemove">${icon('trash')}Remove</button></div>
+  </div>`, { align: 'start' });
+  fig.classList.add('sel');
+  const done = () => { fig.style.width = fig.dataset.w + '%'; changed(); };
+  $$('#imSize button', p).forEach(b => b.onclick = () => { fig.dataset.w = b.dataset.w; $$('#imSize button', p).forEach(x => x.classList.toggle('on', x === b)); done(); });
+  const cap = $('#imCap', p);
+  cap.oninput = () => { const v = cap.value.trim(); if (v) fig.dataset.cap = v; else delete fig.dataset.cap; const img = $('img', fig); if (img) img.alt = v; changed(); };
+  cap.onkeydown = e => { if (e.key === 'Enter') { e.preventDefault(); closePop(); } };
+  $('#imRemove', p).onclick = () => { const next = fig.nextElementSibling; fig.remove(); if (next && next.tagName === 'P' && !next.textContent.trim() && next.previousElementSibling && next.previousElementSibling.tagName === 'P' && !next.previousElementSibling.textContent.trim()) next.remove(); closePop(); changed(); toast('Picture removed', null, 1600); };
+  $('#imReplace', p).onclick = () => {
+    const fi = el('<input type="file" accept="image/*" hidden>'); document.body.appendChild(fi);
+    fi.onchange = async () => {
+      fi.remove(); if (!fi.files[0]) return;
+      try { const data = await compressImage(fi.files[0]); const it = newImageItem(state.project.id, state.scene.id, data); await db.put('items', it); state.items.push(it); fig.dataset.img = it.id; hydrateImages($('#editor'), state.items); changed(); closePop(); }
+      catch (e) { errorToast(e); }
+    };
+    fi.click();
+  };
+  const obs = new MutationObserver(() => { if (!document.body.contains(p)) { fig.classList.remove('sel'); obs.disconnect(); } });
+  obs.observe(document.body, { childList: true, subtree: true });
+}
+
 function openFind() {
   const sel = getSelection();
   const pre = sel && !sel.isCollapsed && $('#editor')?.contains(sel.anchorNode) ? sel.toString().trim().slice(0, 80) : '';
@@ -1019,6 +1260,7 @@ function openFind() {
 
 function applyFormat(f) {
   if (f === 'comment') return revise.addComment();
+  if (f === 'image') return pickImage();
   if (isMd()) {
     const ta = $('#mdEditor'); ta.focus();
     const map = { bold: ['**', '**'], italic: ['*', '*'], heading: ['## ', ''], quote: ['> ', ''], list: ['- ', ''], break: ['\n* * *\n', ''] };
@@ -1102,8 +1344,9 @@ function bindToggles(root) {
 }
 
 // ---------- Project details ----------
-function projectSheet() {
+async function projectSheet(focus) {
   const p = state.project;
+  const seriesList = await series.allSeries();
   let cover = p.cover, format = p.format || 'rich', coverImage = p.coverImage || null;
   const s = sheet({
     title: 'Project details',
@@ -1119,6 +1362,10 @@ function projectSheet() {
         <div class="field"><label class="field-label" for="pd-target">Word target</label><input class="input tnum" id="pd-target" type="number" min="0" step="1000" value="${p.target || ''}" placeholder="e.g. 80000"></div>
         <div class="field"><label class="field-label" for="pd-deadline">Deadline</label><input class="input tnum" id="pd-deadline" type="date" value="${p.deadline || ''}"></div>
       </div>
+      <div class="field" id="pd-series-f"><label class="field-label" for="pd-series">Series</label>
+        <select class="input" id="pd-series" ${p.enc ? 'disabled' : ''}><option value="">Not in a series</option>${seriesList.map(x => `<option value="${x.id}" ${p.seriesId === x.id ? 'selected' : ''}>${esc(x.title)}</option>`).join('')}<option value="__new">New series…</option></select>
+        <input class="input" id="pd-series-new" placeholder="Name of the new series" maxlength="120" hidden>
+        <span class="note" style="text-align:left">${p.enc ? 'Encrypted projects can’t join a series.' : 'Books in a series share their characters, places and lore.'}</span></div>
       <div class="field"><span class="field-label">Type of project</span><div class="seg" id="pd-mode">${Object.entries(MODES).map(([k, m]) => `<button data-v="${k}" class="${modeOf(p) === k ? 'on' : ''}">${m.name}</button>`).join('')}</div></div>
       <div class="field"><span class="field-label">Editor</span><div class="seg" id="pd-format"><button data-v="rich" class="${format === 'rich' ? 'on' : ''}">Rich text</button><button data-v="markdown" class="${format === 'markdown' ? 'on' : ''}">Markdown</button></div><span class="note" style="text-align:left">Rich text supports Markdown shortcuts too. Switching keeps your formatting.</span></div>`,
     foot: `<button class="btn btn-ghost" data-c>Cancel</button><button class="btn btn-primary" data-save>Save</button>`
@@ -1136,14 +1383,36 @@ function projectSheet() {
   $$('#pd-mode button', s.wrap).forEach(b => b.onclick = () => { pmode = b.dataset.v; $$('#pd-mode button', s.wrap).forEach(x => x.classList.toggle('on', x === b)); });
   $$('#pd-format button', s.wrap).forEach(b => b.onclick = () => { format = b.dataset.v; $$('#pd-format button', s.wrap).forEach(x => x.classList.toggle('on', x === b)); });
   $('[data-c]', s.wrap).onclick = s.close;
+  $('#pd-series', s.wrap).onchange = e => { const n = $('#pd-series-new', s.wrap); n.hidden = e.target.value !== '__new'; if (!n.hidden) n.focus(); };
+  if (focus === 'series') setTimeout(() => { $('#pd-series-f', s.wrap).scrollIntoView({ block: 'center' }); $('#pd-series', s.wrap).focus(); }, 80);
   $('[data-save]', s.wrap).onclick = async () => {
     await saveNow();
+    // series change first: it moves the story bible around
+    let want = $('#pd-series', s.wrap).value, newName = '';
+    if (want === '__new') {
+      newName = $('#pd-series-new', s.wrap).value.trim();
+      if (!newName) { $('#pd-series-new', s.wrap).focus(); return toast('Give the new series a name'); }
+    }
+    if (want !== (p.seriesId || '')) {
+      const target = seriesList.find(x => x.id === want);
+      const ok = await confirmSheet(want
+        ? { title: `Add to “${esc(newName || (target ? target.title : 'the series'))}”?`, sub: 'This book’s characters, places and lore move into the series and are shared with its other books. Entries with the same name are merged into one.', confirm: 'Add to series' }
+        : { title: 'Take this book out of its series?', sub: 'It keeps its own copy of the shared characters, places and lore. Changes you make afterwards won’t reach the other books.', confirm: 'Take it out' });
+      if (!ok) return;
+      try {
+        if (newName) { const rec = series.newSeriesRecord(newName); await db.put('projects', rec); want = rec.id; }
+        if (p.seriesId) await series.leaveSeries(p);
+        if (want) await series.joinSeries(p, want);
+      } catch (e) { return errorToast(e); }
+    }
     Object.assign(p, { title: $('#pd-title').value.trim() || 'Untitled project', subtitle: $('#pd-sub').value.trim(), author: $('#pd-author').value.trim(), cover, format, coverImage, target: parseInt($('#pd-target').value, 10) || null, deadline: $('#pd-deadline').value || null });
     if (p.sample) p.sample = false;
     touch(p); await db.put('projects', p);
     const modeChanged = pmode !== modeOf(p);
     if (modeChanged) { p.mode = pmode; if (pmode !== 'novel') p.format = 'rich'; touch(p); await db.put('projects', p); }
-    s.close(); renderProjectHead(); renderGoalStrip();
+    s.close();
+    if (want !== (state.series ? state.series.id : '')) { toast(want ? 'Added to the series' : 'Taken out of the series'); return openProject(p.id, state.scene && state.scene.id); }
+    renderProjectHead(); renderGoalStrip();
     if (modeChanged) { const id = state.scene && state.scene.id; renderWorkspace(); if (id) await loadScene(id); await setView('write'); }
     else if (state.scene) await loadScene(state.scene.id);
     toast('Project updated');
@@ -1329,7 +1598,7 @@ async function statsSheet() {
   if (state.project) await saveNow();
   const goal = settings.dailyGoal;
   const sum = await stats.summary(goal);
-  const projects = (await db.all('projects')).filter(p => !p.deleted).sort((a, b) => (b.lastEdited || b.updatedAt) - (a.lastEdited || a.updatedAt));
+  const projects = (await db.all('projects')).filter(p => !p.deleted && !series.isSeries(p)).sort((a, b) => (b.lastEdited || b.updatedAt) - (a.lastEdited || a.updatedAt));
   const pst = await Promise.all(projects.map(p => projectStats(p.id)));
   const weekDelta = sum.lastWeek ? Math.round((sum.week - sum.lastWeek) / sum.lastWeek * 100) : null;
 
@@ -1380,6 +1649,7 @@ async function statsSheet() {
       <div class="tile tile-today">${ring(sum.today / goal, 72, 5)}<div class="tt-main"><span class="t-label">Today</span><b class="tnum">${num(sum.today)}<small> words</small></b><label class="goal-edit">Daily goal <input class="tnum" type="number" id="st-goal" min="50" step="50" value="${goal}"></label></div></div>
       <div class="tile"><span class="t-label">${icon('flame')}Streak</span><b class="tnum">${sum.streak}<small> day${sum.streak === 1 ? '' : 's'}</small></b><span class="t-sub tnum">Best ${sum.best} · goal met each day</span></div>
       <div class="tile"><span class="t-label">${icon('calendar')}Last 7 days</span><b class="tnum">${num(sum.week)}</b><span class="t-sub tnum">${weekDelta === null ? 'words written' : `${weekDelta >= 0 ? '▲' : '▼'} ${Math.abs(weekDelta)}% vs previous week`}</span></div>
+      <div class="tile" data-lv style="cursor:pointer"><span class="t-label">${icon('star')}Level</span><b class="tnum">${computeExp(sum.byDay).level}<small> ${esc(computeExp(sum.byDay).title)}</small></b><span class="t-sub tnum">${num(computeExp(sum.byDay).exp)} EXP · tap for details</span></div>
       <div class="tile"><span class="t-label">${icon('timer')}Pace</span><b class="tnum">${sum.wph ? num(sum.wph) : '—'}<small> words/hr</small></b><span class="t-sub tnum">${sum.minutes >= 1 ? `${Math.round(sum.minutes / 60 * 10) / 10} h of active writing` : 'Shows after some writing time'}</span></div>
     </div>
     <div class="group"><div class="group-title">Every day you wrote</div>
@@ -1393,6 +1663,7 @@ async function statsSheet() {
     </div>
     <div class="group"><div class="group-title">Deadlines</div><div class="card-list plans">${projRows || '<div class="empty-note">No projects yet.</div>'}</div></div>` });
 
+  $('[data-lv]', s.wrap).onclick = () => { s.close(); levelSheet(); };
   $('#st-goal', s.wrap).onchange = async e => { settings.dailyGoal = Math.max(50, parseInt(e.target.value, 10) || 500); await saveSettings(); s.close(); statsSheet(); renderGoalStrip(); if (!$('#library').hidden) renderLibrary(); };
   $$('[data-pf]', s.wrap).forEach(inp => inp.onchange = async () => {
     const pid = inp.closest('[data-pid]').dataset.pid;
@@ -1503,7 +1774,7 @@ async function settingsSheet(focus) {
       <div class="card-list">${snaps.length ? snaps.sort((a, b) => b.createdAt - a.createdAt).map(sn => `<div class="li"><div class="li-icon">${icon('clock')}</div><div class="li-text"><b>${esc(sn.reason)}</b><span>${ago(sn.createdAt)} · ${sn.counts.projects} projects, ${sn.counts.scenes} scenes</span></div><button class="btn btn-ghost btn-sm" data-snap="${sn.id}">Restore</button></div>`).join('') : `<div class="empty-note">Inkfold saves a snapshot automatically before every sync, import and restore.</div>`}</div>
     </div>
     <div class="group"><div class="group-title">Trash</div>
-      <div class="card-list">${trashP.length + trashI.length ? [...trashP.map(p => ({ id: p.id, kind: 'project', title: p.title, sub: 'Project', at: p.deletedAt })), ...trashI.map(i => ({ id: i.id, kind: 'item', title: i.title, sub: `${i.type === 'chapter' ? 'Chapter' : i.type === 'scene' ? 'Scene' : (KINDS[i.type]?.one || 'Item')} in ${pname(i.projectId)}`, at: i.deletedAt }))]
+      <div class="card-list">${trashP.length + trashI.length ? [...trashP.map(p => ({ id: p.id, kind: 'project', title: p.title, sub: series.isSeries(p) ? 'Series' : 'Project', at: p.deletedAt })), ...trashI.map(i => ({ id: i.id, kind: 'item', title: i.title, sub: `${i.type === 'chapter' ? 'Chapter' : i.type === 'scene' ? 'Scene' : (KINDS[i.type]?.one || 'Item')} in ${pname(i.projectId)}`, at: i.deletedAt }))]
         .sort((a, b) => b.at - a.at).map(t => `<div class="li"><div class="li-icon">${icon(t.kind === 'project' ? 'book' : 'file')}</div><div class="li-text"><b>${esc(t.title)}</b><span>${esc(t.sub)} · deleted ${ago(t.at)}</span></div><button class="btn btn-ghost btn-sm" data-untrash="${t.kind}:${t.id}">Restore</button><button class="icon-btn" data-purge="${t.kind}:${t.id}" aria-label="Delete forever">${icon('x')}</button></div>`).join('')
         : `<div class="empty-note">Trash is empty. Deleted items stay here for 30 days.</div>`}</div>
     </div>
@@ -1757,7 +2028,7 @@ async function boot() {
       findInScene: async (id, terms) => { await setView('write'); await loadScene(id); setTimeout(() => revise.highlightFind(nameRegex(terms), true), 60); },
       onChange: () => { refreshNamesSoon(); } });
     revise.initRevise({ state, settings, saveSettings, saveNow, saveItem, isMd,
-      reloadScene: async () => { const id = state.scene.id; state.dirty = false; state.items = await db.byProject(state.project.id); await loadScene(id); renderBinder(); },
+      reloadScene: async () => { const id = state.scene.id; state.dirty = false; state.items = await series.loadItems(state.project); await loadScene(id); renderBinder(); },
       openScene: async id => { await setView('write'); await loadScene(id); },
       markChanged: () => changed(),
       onChange: () => { renderBinder(); updateCrumbs(); } });

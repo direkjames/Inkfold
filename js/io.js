@@ -4,6 +4,7 @@ import { loadLib, LIBS } from './libs.js';
 import { buildTree, createProjectFrom, touch } from './model.js';
 import { htmlToBlocks, blocksToMd, mdToBlocks, plainToBlocks } from './text.js';
 import { mergeLibraries } from './sync.js';
+import { bibleCopyFor } from './series.js';
 import { uid } from './db.js';
 
 const today = () => new Date().toISOString().slice(0, 10);
@@ -92,7 +93,10 @@ export async function restoreBackup(data, mode) {
 export async function exportProjectFile(projectId) {
   const project = { ...(await db.get('projects', projectId)) };
   delete project.enc; // an exported project file is a plain copy
-  const items = (await db.byProject(projectId)).map(i => { const o = { ...i }; delete o._dec; delete o.enc; return o; });
+  // a book in a series carries a copy of the shared story bible, so the file stands on its own
+  const shared = await bibleCopyFor(project);
+  delete project.seriesId; delete project.seriesOrder;
+  const items = (await db.byProject(projectId)).map(i => { const o = { ...i }; delete o._dec; delete o.enc; return o; }).concat(shared);
   const blob = new Blob([JSON.stringify({ format: 'inkfold-project', version: 1, exportedAt: Date.now(), project, items })], { type: 'application/json' });
   return saveFile(blob, `${safeName(project.title)}.inkfold`, { preferShare: true });
 }
@@ -108,9 +112,13 @@ export async function importProjectData(data, mode) {
   if (mode === 'copy') {
     const map = new Map();
     const newPid = uid('prj-');
-    data.items.forEach(i => map.set(i.id, uid(i.type === 'chapter' ? 'ch-' : 'sc-')));
+    data.items.forEach(i => map.set(i.id, uid(i.type === 'chapter' ? 'ch-' : i.type === 'scene' ? 'sc-' : (i.type || 'it').slice(0, 2) + '-')));
     const project = touch({ ...data.project, id: newPid, revs: [], title: data.project.title + ' (copy)' });
-    const items = data.items.map(i => touch({ ...i, id: map.get(i.id), projectId: newPid, parentId: i.parentId ? map.get(i.parentId) || null : null, revs: [] }));
+    delete project.seriesId;
+    // pictures and relationships point at other items by id, so those references move too
+    const remapContent = c => typeof c === 'string' ? c.replace(/data-img="([\w-]+)"/g, (m, id) => `data-img="${map.get(id) || id}"`) : c;
+    const remapData = d => d && d.a && d.b ? { ...d, a: map.get(d.a) || d.a, b: map.get(d.b) || d.b } : d;
+    const items = data.items.map(i => touch({ ...i, id: map.get(i.id), projectId: newPid, parentId: i.parentId ? map.get(i.parentId) || null : null, content: remapContent(i.content), data: i.type === 'rel' ? remapData(i.data) : i.data, revs: [] }));
     await db.writeBatch({ projects: [project], items });
     return project;
   }
@@ -141,7 +149,7 @@ export async function importDocument(file) {
   let blocks;
   if (ext === 'docx') {
     const mammoth = await loadLib(LIBS.mammoth);
-    const res = await mammoth.convertToHtml({ arrayBuffer: await file.arrayBuffer() });
+    const res = await mammoth.convertToHtml({ arrayBuffer: await file.arrayBuffer() }, { ignoreEmptyParagraphs: false });
     blocks = htmlToBlocks(res.value);
   } else if (ext === 'md' || ext === 'markdown') {
     blocks = mdToBlocks(await file.text());

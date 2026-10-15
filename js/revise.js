@@ -5,6 +5,7 @@ import { touch, buildTree } from './model.js';
 import { htmlToBlocks, blocksToHtml, htmlToText, htmlWords } from './text.js';
 import { $, $$, esc, num, el, icon, sheet, confirmSheet, toast, haptic, ago, debounce } from './ui.js';
 import { entries, nameIndex, nameRegex, avatar } from './bible.js';
+import { hydrateImages } from './images.js';
 
 let ctx; // { state, settings, saveSettings, saveNow, reloadScene, openScene, saveItem, markChanged, isMd }
 export function initRevise(c) { ctx = c; }
@@ -489,6 +490,7 @@ function renderReference(body) {
   $('#refPick', body).onchange = e => { refId = e.target.value; renderReference(body); };
   const it = ctx.state.items.find(i => i.id === refId), rb = $('#refBody', body);
   if (!it) { rb.innerHTML = '<div class="sp-empty"><span>Nothing to show yet.</span></div>'; return; }
+  if (it.type === 'scene') setTimeout(() => hydrateImages(rb, ctx.state.items));
   if (it.type === 'scene') rb.innerHTML = `<h3 class="ref-title">${esc(it.title)}</h3><div class="ref-text">${it.content || '<p class="note">This scene is empty.</p>'}</div><button class="btn btn-ghost btn-sm" data-ref-open>${icon('pen')}Open this scene</button>`;
   else {
     const d = it.data || {};

@@ -111,7 +111,7 @@ export const db = {
     const data = await this.dump();
     delete data.log; // snapshots cover writing, not stats
     const snap = { id: 'snap-' + Date.now(), createdAt: Date.now(), reason, data,
-      counts: { projects: data.projects.filter(p => !p.deleted).length, scenes: data.items.filter(i => i.type === 'scene' && !i.deleted).length } };
+      counts: { projects: data.projects.filter(p => !p.deleted && p.kind !== 'series').length, scenes: data.items.filter(i => i.type === 'scene' && !i.deleted).length } };
     await this.put('snapshots', snap);
     const all = (await this.all('snapshots')).sort((a, b) => b.createdAt - a.createdAt);
     for (const old of all.slice(10)) await this.del('snapshots', old.id);

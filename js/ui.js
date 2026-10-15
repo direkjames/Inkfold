@@ -85,6 +85,11 @@ export const ICONS = {
   palette: '<path d="M12 3a9 9 0 100 18c1.4 0 2-1 1.6-2.1-.5-1.2.3-2.4 1.6-2.4H17a4 4 0 004-4c0-5-4-9.5-9-9.5z"/><circle cx="7.5" cy="11" r="1.2"/><circle cx="10.5" cy="7" r="1.2"/><circle cx="15" cy="7.5" r="1.2"/>',
   align: '<path d="M4 6h16M7 10h10M4 14h16M7 18h10"/>',
   quoteMark: '<path d="M7 7h4v4c0 3-1.5 5-4 6M14 7h4v4c0 3-1.5 5-4 6"/>',
+  alert: '<path d="M12 4l9 16H3z"/><path d="M12 10v4.5M12 17.5h.01"/>',
+  stack: '<rect x="4" y="9" width="16" height="11" rx="2"/><path d="M6.5 6h11M9 3h6"/>',
+  star: '<path d="M12 3.5l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.8 6.8 19.6l1-5.8-4.3-4.1 5.9-.9z"/>',
+  tab: '<path d="M3 20V8a2 2 0 012-2h5l2 3h7a2 2 0 012 2v9z"/>',
+  resize: '<path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/>',
 };
 export const icon = (n, cls = 'i') => `<svg class="${cls}" viewBox="0 0 24 24" aria-hidden="true">${ICONS[n] || ''}</svg>`;
 export const MARK = `<svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true"><path d="M7 4.5h12.5L25 10v17.5H7z" fill="var(--text)"/><path d="M19.5 4.5V10H25z" fill="var(--accent)"/><path d="M16 12.6s-3.9 4.3-3.9 6.8a3.9 3.9 0 0 0 7.8 0c0-2.5-3.9-6.8-3.9-6.8z" fill="var(--bg)"/></svg>`;

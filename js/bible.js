@@ -40,7 +40,42 @@ export function avatar(it, size = 40, cls = '') {
 
 export const entries = (type) => ctx.state.items.filter(i => !i.deleted && (type ? i.type === type : KINDS[i.type])).sort((a, b) => (a.title || '').localeCompare(b.title || ''));
 export const rels = () => ctx.state.items.filter(i => !i.deleted && i.type === 'rel');
-const names = it => [it.title, ...((it.data && it.data.aliases) || [])].map(s => (s || '').trim()).filter(s => s.length > 1);
+const fullNames = it => [it.title, ...((it.data && it.data.aliases) || [])].map(s => (s || '').trim()).filter(s => s.length > 1);
+
+// ---------- First names ----------
+// "Luna Valentino" also matches plain "Luna", unless another entry is also called Luna (then only full names count).
+const HONORIFICS = new Set(['mr', 'mrs', 'ms', 'miss', 'mx', 'dr', 'sir', 'dame', 'lady', 'lord', 'king', 'queen', 'prince', 'princess', 'duke', 'duchess', 'count', 'countess', 'baron', 'baroness', 'emperor', 'empress', 'captain', 'capt', 'general', 'professor', 'prof', 'father', 'mother', 'sister', 'brother', 'saint', 'st', 'aunt', 'uncle', 'master', 'madam', 'madame', 'detective', 'officer', 'agent', 'commander', 'colonel', 'lieutenant', 'sergeant', 'major', 'high', 'grand']);
+export function firstNameOf(it) {
+  if (!it || it.type !== 'character' || !it.title) return null;
+  const words = it.title.trim().split(/\s+/);
+  while (words.length > 1 && HONORIFICS.has(words[0].replace(/\.$/, '').toLowerCase())) words.shift();
+  const first = (words[0] || '').replace(/[.,;:!?]+$/, '');
+  if (first.length < 2 || first === it.title.trim()) return null;
+  return first;
+}
+let fnCache = null; // { key, info: Map(id -> { name, clash: [entries], off }) }
+function firstNames() {
+  const list = entries();
+  const key = list.map(e => e.id + '\u0001' + e.title + '\u0001' + ((e.data && e.data.aliases) || []).join('|') + '\u0001' + (e.data && e.data.firstName === false ? 0 : 1)).join('\u0002');
+  if (fnCache && fnCache.key === key) return fnCache.info;
+  const info = new Map(), byName = new Map();
+  for (const e of list) { const n = firstNameOf(e); if (!n) continue; info.set(e.id, { name: n, clash: [], off: !!(e.data && e.data.firstName === false) }); if (!info.get(e.id).off) { if (!byName.has(n)) byName.set(n, []); byName.get(n).push(e); } }
+  for (const [id, x] of info) {
+    if (x.off) continue;
+    const others = (byName.get(x.name) || []).filter(e => e.id !== id);
+    // also clashes with another entry's full name or alias ("Luna" the place, or someone nicknamed Luna)
+    for (const e of list) if (e.id !== id && !others.includes(e) && fullNames(e).includes(x.name)) others.push(e);
+    x.clash = others;
+  }
+  fnCache = { key, info };
+  return info;
+}
+export function firstNameInfo(it) { return firstNames().get(it.id) || null; }
+const names = it => {
+  const full = fullNames(it);
+  const f = firstNames().get(it.id);
+  return f && !f.off && !f.clash.length && !full.includes(f.name) ? [...full, f.name] : full;
+};
 
 // Every name and alias, longest first, for highlighting and hover cards
 export function nameIndex() {
@@ -70,6 +105,7 @@ export function renderBible(root, opts = {}) {
         ${Object.entries(KINDS).map(([k, v]) => `<button data-tab="${k}" class="${tab === k ? 'on' : ''}">${v.many}</button>`).join('')}
         <button data-tab="map" class="${tab === 'map' ? 'on' : ''}">Relationships</button>
       </div>
+      ${ctx.state.series ? `<div class="bb-shared" title="Changes here show up in every book of the series">${icon('stack')}<span>Shared with the series <b>${esc(ctx.state.series.title)}</b></span></div>` : ''}
       ${tab !== 'map' ? `
       <div class="bb-search">${icon('search')}<input id="bbSearch" placeholder="Search ${KINDS[tab].many.toLowerCase()}" value="${esc(query)}" autocomplete="off"></div>
       <div class="bb-list">${list.map(e => `<button class="bb-item ${e.id === selected ? 'on' : ''}" data-sel="${e.id}">${avatar(e, 38)}<span class="bi-text"><b>${esc(e.title || 'Unnamed')}</b><span>${esc(subline(e))}</span></span></button>`).join('') || `<div class="bb-empty">${icon(KINDS[tab].icon)}<b>No ${KINDS[tab].many.toLowerCase()} yet</b><span>${tab === 'character' ? 'Everyone in your story, with their wants, flaws and arcs.' : tab === 'place' ? 'Where things happen, so details stay consistent.' : 'Rules, history and objects of your world.'}</span></div>`}</div>
@@ -97,7 +133,7 @@ function subline(e) {
 
 async function newEntry(type, root) {
   const order = entries(type).length + 1;
-  const it = touch({ id: uid(type.slice(0, 2) + '-'), projectId: ctx.state.project.id, type, parentId: null, order, title: '', content: '', deleted: false, data: { aliases: [], traits: [] } });
+  const it = touch({ id: uid(type.slice(0, 2) + '-'), projectId: ctx.state.project.seriesId || ctx.state.project.id, type, parentId: null, order, title: '', content: '', deleted: false, data: { aliases: [], traits: [] } });
   ctx.state.items.push(it);
   await ctx.saveItem(it);
   selected = it.id; query = '';
@@ -109,6 +145,9 @@ async function newEntry(type, root) {
 function renderDetail(main, it, root) {
   const d = it.data = it.data || {};
   const isChar = it.type === 'character', isPlace = it.type === 'place';
+  const tabs = isChar ? tabsFor(it) : [];
+  let active = isChar ? (activeTab.get(it.id) || 'profile') : 'profile';
+  if (active !== 'profile' && !tabs.some(t => t.id === active)) active = 'profile';
   const related = isChar ? rels().filter(r => r.data.a === it.id || r.data.b === it.id) : [];
   main.innerHTML = `<article class="bd">
     <button class="icon-btn bd-back only-narrow" data-back aria-label="Back to list">${icon('back')}</button>
@@ -118,12 +157,15 @@ function renderDetail(main, it, root) {
         <span class="eyebrow">${KINDS[it.type].one}</span>
         <input class="bd-name" id="bdName" value="${esc(it.title)}" placeholder="${isChar ? 'Name' : isPlace ? 'Place name' : 'Title'}" maxlength="80" data-f="title">
         <input class="bd-alias" data-f="aliases" value="${esc((d.aliases || []).join(', '))}" placeholder="Also known as (comma separated)" maxlength="160">
+        ${isChar ? `<div class="bd-first" id="bdFirst">${firstNameLine(it)}</div>` : ''}
         ${isChar ? `<div class="role-chips">${ROLES.map(r => `<button class="rchip ${d.role === r ? 'on' : ''}" data-role="${r}">${r}</button>`).join('')}</div>` : ''}
       </div>
       <button class="icon-btn" data-entry-menu aria-label="More">${icon('more')}</button>
     </header>
-    <div class="bd-grid">
-      ${isChar ? `${fld('age', 'Age', d.age, 'e.g. 34')}${fld('occupation', 'Occupation', d.occupation, 'What they do')}${fld('home', 'Lives in', d.home, 'Where they live')}`
+    ${isChar ? tabStrip(it, tabs, active) : ''}
+    ${active === 'profile' ? `
+    <div class="bd-grid ${isChar ? 'four' : ''}">
+      ${isChar ? `${fld('age', 'Age', d.age, 'e.g. 34')}${sel('gender', 'Gender', d.gender, GENDERS)}${fld('occupation', 'Occupation', d.occupation, 'What they do')}${fld('home', 'Lives in', d.home, 'Where they live')}`
         : isPlace ? `${fld('kind', 'Type', d.kind, 'Town, room, planet…')}${fld('region', 'Region', d.region, 'Where it is')}${fld('era', 'Era', d.era, 'When')}`
         : `${fld('category', 'Category', d.category, 'Magic, history, object…')}`}
     </div>
@@ -138,6 +180,7 @@ function renderDetail(main, it, root) {
     ${isChar ? `<section class="bd-sec"><div class="bd-sec-h"><span class="group-title">Relationships</span><button class="btn btn-ghost btn-sm" data-addrel>${icon('plus')}Add</button></div>
       ${related.length ? `<div class="rel-list">${related.map(r => relRow(r, it.id)).join('')}</div>` : `<p class="note" style="text-align:left">No relationships yet. Add family, friends, rivals and more. They appear on the Relationships map.</p>`}</section>` : ''}
     <section class="bd-sec" id="bdMentions"><div class="bd-sec-h"><span class="group-title">Appears in</span></div><div class="note" style="text-align:left">Looking through your scenes…</div></section>
+` : customPane(it, tabs.find(t => t.id === active))}
   </article>`;
 
   const save = debounce(() => ctx.saveItem(it).then(() => ctx.onChange && ctx.onChange({ skipView: true })), 400);
@@ -148,7 +191,10 @@ function renderDetail(main, it, root) {
     else if (f === 'aliases') d.aliases = inp.value.split(',').map(s => s.trim()).filter(Boolean);
     else d[f] = inp.value;
     refreshList(); save();
+    if ((f === 'title' || f === 'aliases') && isChar) { const fl = $('#bdFirst', main); if (fl) { fl.innerHTML = firstNameLine(it); bindFirst(); } }
   }));
+  const bindFirst = () => { const t = $('[data-firstname]', main); if (t) t.onclick = () => { d.firstName = d.firstName === false ? true : false; if (d.firstName) delete d.firstName; $('#bdFirst', main).innerHTML = firstNameLine(it); bindFirst(); save(); }; };
+  bindFirst();
   $$('[data-role]', main).forEach(b => b.onclick = () => { d.role = d.role === b.dataset.role ? '' : b.dataset.role; $$('[data-role]', main).forEach(x => x.classList.toggle('on', x.dataset.role === d.role)); refreshList(); save(); });
   const tin = $('#bdTraitIn', main);
   if (tin) tin.onkeydown = e => {
@@ -170,9 +216,125 @@ function renderDetail(main, it, root) {
   const addRel = $('[data-addrel]', main); if (addRel) addRel.onclick = () => relSheet({ a: it.id }, () => renderDetail(main, it, root));
   $$('[data-rel]', main).forEach(b => b.onclick = () => relSheet(rels().find(r => r.id === b.dataset.rel), () => renderDetail(main, it, root)));
   $$('[data-goto]', main).forEach(b => b.onclick = () => { const t = ctx.state.items.find(i => i.id === b.dataset.goto); if (t) { tab = t.type; selected = t.id; renderBible(root); } });
-  bindNotes($('#bdNotes', main), it, save, root);
+  if ($('#bdNotes', main)) bindNotes($('#bdNotes', main), it, save, root);
   $$('.bd textarea', main).forEach(autosize);
-  mentions(it, $('#bdMentions', main), root);
+  if ($('#bdMentions', main)) mentions(it, $('#bdMentions', main), root);
+  if (isChar) bindTabs(main, it, root, save, tabs, active);
+}
+
+function firstNameLine(it) {
+  const f = firstNameInfo(it);
+  if (!f) return '';
+  const sw = `<button class="switch sm" role="switch" aria-checked="${!f.off}" data-firstname aria-label="Match the first name on its own"></button>`;
+  if (f.off) return `${sw}<span>“${esc(f.name)}” on its own isn’t matched. Only the full name and aliases are.</span>`;
+  if (f.clash.length) return `${sw}<span class="warn">${icon('alert')}<span>“${esc(f.name)}” is also ${f.clash.map(e => `<b>${esc(e.title)}</b>`).join(', ')}, so it isn’t matched on its own. Add it as an alias to the one you mean, or use full names.</span></span>`;
+  return `${sw}<span>Also found as “<b>${esc(f.name)}</b>” in your scenes.</span>`;
+}
+
+export const GENDERS = ['Male', 'Female', 'Non-binary', 'Other'];
+const sel = (f, label, v, opts) => `<label class="field"><span class="field-label">${label}</span><select class="input" data-f="${f}"><option value="">Not set</option>${opts.map(o => `<option ${v === o ? 'selected' : ''}>${o}</option>`).join('')}</select></label>`;
+
+// ---------------------------------------------------------------- Custom profile tabs
+// The shared layout (tab names and field labels) is one item per project or series: { type: 'charTabs', data: { tabs } }.
+// One-off tabs live on the character (data.ownTabs). Values for both live in data.custom[tabId][fieldId].
+const activeTab = new Map();
+const ownerId = () => ctx.state.project.seriesId || ctx.state.project.id;
+function layoutItem(create = false) {
+  const id = 'tabs-' + ownerId();
+  let it = ctx.state.items.find(i => i.id === id) || ctx.state.items.find(i => i.type === 'charTabs' && !i.deleted);
+  if (!it && create) { it = touch({ id, projectId: ownerId(), type: 'charTabs', parentId: null, order: 0, title: 'Profile tabs', content: '', deleted: false, data: { tabs: [] } }); ctx.state.items.push(it); }
+  return it;
+}
+function tabsFor(it) {
+  const shared = ((layoutItem() || {}).data || {}).tabs || [];
+  return [...shared.map(t => ({ ...t, shared: true })), ...(((it.data || {}).ownTabs) || []).map(t => ({ ...t, shared: false }))];
+}
+function tabStrip(it, tabs, active) {
+  return `<nav class="bd-tabs" role="tablist">
+    <button role="tab" class="bd-tab ${active === 'profile' ? 'on' : ''}" data-ptab="profile">Profile</button>
+    ${tabs.map(t => `<button role="tab" class="bd-tab ${active === t.id ? 'on' : ''}" data-ptab="${t.id}" title="${t.shared ? 'On every character' : 'Only on this character'}">${esc(t.name)}${t.shared ? '' : '<i class="own-dot"></i>'}</button>`).join('')}
+    <button class="bd-tab add" data-addtab title="Add a tab">${icon('plus')}<span>Tab</span></button>
+  </nav>`;
+}
+function customPane(it, tab) {
+  if (!tab) return '';
+  const vals = ((it.data.custom || {})[tab.id]) || {};
+  return `<section class="bd-custom">
+    <div class="bd-custom-h"><span class="note" style="text-align:left">${tab.shared ? 'This tab is on every character. Field names are shared; what you write is for this character.' : 'This tab is only on this character.'}</span><button class="icon-btn" data-tabmenu aria-label="Tab options">${icon('more')}</button></div>
+    ${(tab.fields || []).map(f => `<div class="cf-row" data-field="${f.id}">
+      <div class="cf-head"><input class="cf-label" data-cflabel="${f.id}" value="${esc(f.label)}" placeholder="Field name" maxlength="60" aria-label="Field name"><button class="icon-btn cf-rm" data-cfrm="${f.id}" aria-label="Remove field">${icon('x')}</button></div>
+      <textarea class="input prose bd-area" data-cf="${f.id}" rows="1" placeholder="${esc(f.label || 'Write here')}…" maxlength="4000">${esc(vals[f.id] || '')}</textarea>
+    </div>`).join('') || `<p class="note" style="text-align:left">No fields yet.</p>`}
+    <button class="btn btn-quiet btn-sm" data-addfield>${icon('plus')}Add field</button>
+  </section>`;
+}
+function bindTabs(main, it, root, save, tabs, active) {
+  const d = it.data;
+  const again = () => renderDetail(main, it, root);
+  $$('[data-ptab]', main).forEach(b => b.onclick = () => { activeTab.set(it.id, b.dataset.ptab); again(); });
+  const tab = tabs.find(t => t.id === active);
+  // where this tab's definition lives, and how to save it
+  const defOf = () => tab.shared ? (layoutItem().data.tabs.find(t => t.id === tab.id)) : d.ownTabs.find(t => t.id === tab.id);
+  const saveDef = async () => { if (tab.shared) { await ctx.saveItem(layoutItem()); } else save(); };
+  $('[data-addtab]', main).onclick = e => {
+    const p = popover(e.currentTarget, `<div class="type-panel tab-new">
+      <div><h4>New tab</h4><p class="sp-sub">For things like Royal Titles, Powers or Backstory.</p></div>
+      <input class="input" id="ntName" placeholder="Tab name" maxlength="40">
+      <div class="seg" id="ntWho"><button data-v="all" class="on">All characters</button><button data-v="one">Just ${esc((it.title || 'this one').split(/\s+/)[0])}</button></div>
+      <button class="btn btn-primary btn-sm" id="ntAdd">${icon('plus')}Add tab</button></div>`, { align: 'start' });
+    let who = 'all';
+    $$('#ntWho button', p).forEach(b => b.onclick = () => { who = b.dataset.v; $$('#ntWho button', p).forEach(x => x.classList.toggle('on', x === b)); });
+    const add = async () => {
+      const name = $('#ntName', p).value.trim(); if (!name) return $('#ntName', p).focus();
+      const t = { id: uid('tb-'), name, fields: [{ id: uid('f-'), label: 'Details' }] };
+      if (who === 'all') { const L = layoutItem(true); L.data = { tabs: [...(L.data.tabs || []), t] }; await ctx.saveItem(L); }
+      else { d.ownTabs = [...(d.ownTabs || []), t]; await ctx.saveItem(it); }
+      closePop(); activeTab.set(it.id, t.id); haptic(6); again();
+      setTimeout(() => { const l = $(`[data-cflabel]`, main); if (l) { l.focus(); l.select(); } }, 40);
+    };
+    $('#ntAdd', p).onclick = add;
+    $('#ntName', p).onkeydown = ev => { if (ev.key === 'Enter') add(); };
+    setTimeout(() => $('#ntName', p).focus(), 30);
+  };
+  if (!tab) return;
+  const saveDefSoon = debounce(saveDef, 500);
+  $$('[data-cf]', main).forEach(t => t.addEventListener('input', () => {
+    d.custom = d.custom || {}; d.custom[tab.id] = { ...(d.custom[tab.id] || {}), [t.dataset.cf]: t.value }; save();
+  }));
+  $$('[data-cflabel]', main).forEach(inp => inp.addEventListener('input', () => {
+    const f = (defOf().fields || []).find(x => x.id === inp.dataset.cflabel); if (f) f.label = inp.value; saveDefSoon();
+    const ta = $(`[data-cf="${inp.dataset.cflabel}"]`, main); if (ta) ta.placeholder = (inp.value || 'Write here') + '…';
+  }));
+  $$('[data-cfrm]', main).forEach(b => b.onclick = async () => {
+    const def = defOf(); const f = def.fields.find(x => x.id === b.dataset.cfrm);
+    if (tab.shared && !(await confirmSheet({ title: `Remove “${esc(f.label || 'this field')}”?`, sub: 'It’s removed from this tab on every character, along with what was written in it.', confirm: 'Remove', danger: true }))) return;
+    def.fields = def.fields.filter(x => x.id !== f.id); await saveDef(); again();
+  });
+  $('[data-addfield]', main).onclick = async () => {
+    const def = defOf(); def.fields = [...(def.fields || []), { id: uid('f-'), label: '' }]; await saveDef(); again();
+    setTimeout(() => { const ls = $$('[data-cflabel]', main); const l = ls[ls.length - 1]; if (l) l.focus(); }, 40);
+  };
+  $('[data-tabmenu]', main).onclick = e => menu(e.currentTarget, [
+    { k: 'rename', icon: 'edit', label: 'Rename tab', run: () => {
+      const b = $(`[data-ptab="${tab.id}"]`, main); const inp = el(`<input class="bd-tab-edit" value="${esc(tab.name)}" maxlength="40">`);
+      b.replaceWith(inp); inp.focus(); inp.select();
+      const fin = async ok => { const v = inp.value.trim(); if (ok && v) { defOf().name = v; await saveDef(); } again(); };
+      inp.onkeydown = ev => { if (ev.key === 'Enter') fin(true); if (ev.key === 'Escape') { ev.stopPropagation(); fin(false); } };
+      inp.onblur = () => fin(true);
+    } },
+    ...(tab.shared ? [] : [{ k: 'share', icon: 'users', label: 'Put this tab on every character', run: async () => {
+      const L = layoutItem(true); L.data = { tabs: [...(L.data.tabs || []), { id: tab.id, name: tab.name, fields: tab.fields }] }; await ctx.saveItem(L);
+      d.ownTabs = d.ownTabs.filter(t => t.id !== tab.id); await ctx.saveItem(it); again(); toast(`“${tab.name}” is now on every character`);
+    } }]),
+    '-',
+    { k: 'del', icon: 'trash', label: 'Delete tab', danger: true, run: async () => {
+      if (!(await confirmSheet({ title: `Delete the “${esc(tab.name)}” tab?`, sub: tab.shared ? 'It’s removed from every character, along with what was written in it.' : 'What was written in it is removed too.', confirm: 'Delete tab', danger: true }))) return;
+      if (tab.shared) { const L = layoutItem(); L.data = { tabs: L.data.tabs.filter(t => t.id !== tab.id) }; await ctx.saveItem(L); }
+      else { d.ownTabs = d.ownTabs.filter(t => t.id !== tab.id); }
+      if (d.custom) delete d.custom[tab.id];
+      await ctx.saveItem(it); activeTab.set(it.id, 'profile'); again();
+    } },
+  ]);
 }
 
 const fld = (f, label, v, ph) => `<label class="field"><span class="field-label">${label}</span><input class="input" data-f="${f}" value="${esc(v || '')}" placeholder="${ph}" maxlength="80"></label>`;
@@ -291,7 +453,7 @@ export function relSheet(rel, after) {
     if (a === b) return toast('Pick two different characters');
     const data = { a, b, kind: d.kind, note: $('#rsNote').value.trim() };
     let r = rel && rel.id ? rel : null;
-    if (!r) { r = touch({ id: uid('rl-'), projectId: ctx.state.project.id, type: 'rel', parentId: null, order: 0, title: '', content: '', deleted: false, data }); ctx.state.items.push(r); }
+    if (!r) { r = touch({ id: uid('rl-'), projectId: ctx.state.project.seriesId || ctx.state.project.id, type: 'rel', parentId: null, order: 0, title: '', content: '', deleted: false, data }); ctx.state.items.push(r); }
     else r.data = data;
     await ctx.saveItem(r); haptic(8); s.close(); after && after();
   };

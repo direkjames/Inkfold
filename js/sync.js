@@ -3,7 +3,7 @@ import { db, deviceInfo } from './db.js';
 import { loadLib, LIBS } from './libs.js';
 
 const ITEM_FIELDS = ['projectId', 'type', 'parentId', 'order', 'title', 'content', 'deleted', 'status', 'label', 'pov', 'synopsis', 'target', 'data', 'when', 'enc'];
-const PROJECT_FIELDS = ['title', 'subtitle', 'author', 'cover', 'format', 'deleted', 'target', 'deadline', 'coverImage', 'mode', 'compile', 'enc', 'align'];
+const PROJECT_FIELDS = ['title', 'subtitle', 'author', 'cover', 'format', 'deleted', 'target', 'deadline', 'coverImage', 'mode', 'compile', 'enc', 'align', 'kind', 'seriesId', 'seriesOrder'];
 const sig = (r, f) => JSON.stringify(f.map(k => r[k] ?? null));
 
 function hash(str) {
@@ -43,7 +43,7 @@ export function mergeLibraries(local, remote, peerName = 'other device') {
   for (const R of remote.projects) {
     if (tombs.has(R.id)) continue;
     const L = lp.get(R.id);
-    if (!L) { out.projects.push(R); summary.projectsAdded++; continue; }
+    if (!L) { out.projects.push(R); if (R.kind !== 'series') summary.projectsAdded++; continue; }
     if (sig(L, PROJECT_FIELDS) === sig(R, PROJECT_FIELDS)) continue;
     const rel = relation(L, R);
     const win = rel === 'remote-newer' ? R : rel === 'local-newer' ? L : pickNewer(L, R, PROJECT_FIELDS);

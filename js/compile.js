@@ -2,7 +2,7 @@
 import { db } from './db.js';
 import { loadLib, LIBS } from './libs.js';
 import { buildTree, statusOf } from './model.js';
-import { htmlToBlocks, blocksToMd } from './text.js';
+import { htmlToBlocks, blocksToMd, isBlank } from './text.js';
 import { saveFile, safeName, exportProjectFile } from './io.js';
 import { $, $$, esc, num, icon, sheet, toast, errorToast } from './ui.js';
 import { modeOf, T } from './modes.js';
@@ -133,6 +133,8 @@ async function compile(ctx, o, picked) {
   if (mode === 'poetry') { tpl.indent = false; tpl.justify = false; }
   const total = chapters.reduce((n, c) => n + c.scenes.reduce((m, s) => m + s.blocks.reduce((k, b) => k + (b.runs || []).map(r => r.text).join('').split(/\s+/).filter(Boolean).length, 0), 0), 0);
   tpl.wordCount = total;
+  // pictures placed in scenes, by id
+  tpl.images = new Map(ctx.state.items.filter(i => i.type === 'image' && i.data && i.data.src).map(i => [i.id, i.data]));
   if (o.format === 'md') return saveFile(new Blob([toMarkdown(p, chapters, tpl)], { type: 'text/markdown' }), `${base}.md`, share);
   if (o.format === 'docx') return saveFile(await toDocx(p, chapters, tpl), `${base}.docx`, share);
   if (o.format === 'pdf') return saveFile(await toPdf(p, chapters, tpl), `${base}.pdf`, share);
@@ -152,7 +154,10 @@ function toMarkdown(p, chapters, o) {
     md += `\n\n## ${[a, b].filter(Boolean).join(': ')}\n`;
     c.scenes.forEach((s, si) => {
       if (o.sceneTitles) md += `\n### ${s.title}\n`; else if (si > 0) md += `\n${sepText(o.sep) || '&nbsp;'}\n`;
-      md += '\n' + blocksToMd(s.blocks.map(b => b.type === 'h2' ? { ...b, type: 'h3' } : b)) + '\n';
+      md += '\n' + blocksToMd(s.blocks.map(b => b.type === 'h2' ? { ...b, type: 'h3' } : b), {
+        blank: '&nbsp;', hardBreaks: true,
+        img: b => { const im = o.images && o.images.get(b.img); return im ? `![${(b.cap || '').replace(/[\[\]]/g, '')}](${im.src})` : ''; },
+      }) + '\n';
     });
   });
   return md;
@@ -172,6 +177,19 @@ async function toDocx(p, chapters, o) {
   const JSZip = await loadLib(LIBS.jszip);
   const ms = o.titlePage === 'manuscript';
   let body = '';
+  const A4 = o.pageSize !== 'letter';
+  const media = []; // { name, b64, ext, rid }
+  const textW = (A4 ? 11906 : 12240) - 2880; // twips between the margins
+  function docxImage(bk) {
+    const im = o.images && o.images.get(bk.img); if (!im) return '';
+    const m = /^data:image\/(png|jpe?g);base64,(.*)$/.exec(im.src); if (!m) return '';
+    const ext = m[1] === 'png' ? 'png' : 'jpeg';
+    const n = media.length + 1, rid = 'rIdImg' + n;
+    media.push({ name: `image${n}.${ext}`, b64: m[2], ext, rid });
+    const cx = Math.round(textW * (bk.w || 100) / 100 * 635), cy = Math.round(cx * (im.h || 1) / (im.w || 1));
+    const draw = `<w:r><w:drawing><wp:inline distT="0" distB="0" distL="0" distR="0"><wp:extent cx="${cx}" cy="${cy}"/><wp:docPr id="${n}" name="Picture ${n}" descr="${x(bk.cap || '')}"/><a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:nvPicPr><pic:cNvPr id="${n}" name="image${n}.${ext}"/><pic:cNvPicPr/></pic:nvPicPr><pic:blipFill><a:blip r:embed="${rid}"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill><pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${cx}" cy="${cy}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic></a:graphicData></a:graphic></wp:inline></w:drawing></w:r>`;
+    return wP('Figure', draw) + (bk.cap ? wP('Caption', wRuns(R(bk.cap))) : '');
+  }
   if (ms) {
     const contact = [p.author, ...(o.contact || '').split('\n')].filter(Boolean);
     body += `<w:p><w:pPr><w:pStyle w:val="Plain"/><w:tabs><w:tab w:val="right" w:pos="9026"/></w:tabs></w:pPr>${wRuns(R(contact[0] || ''))}<w:r><w:tab/></w:r>${wRuns(R(`about ${num(roundWords(o.wordCount))} words`))}</w:p>`;
@@ -196,6 +214,8 @@ async function toDocx(p, chapters, o) {
       let first = true;
       s.blocks.forEach(bk => {
         if (bk.type === 'hr') { body += wP('SceneBreak', wRuns(R(sepText(o.sep)))); first = true; return; }
+        if (isBlank(bk)) { body += wP('Blank', ''); first = true; return; }
+        if (bk.type === 'img') { body += docxImage(bk); first = true; return; }
         if (bk.type === 'h2' || bk.type === 'h3') { body += wP('Heading3', wRuns(bk.runs)); first = true; return; }
         if (bk.type === 'quote') { body += wP('Quote', wRuns(bk.runs)); return; }
         if (bk.type === 'ul' || bk.type === 'ol') { body += wP('ListItem', wRuns([{ text: '•  ' }, ...bk.runs])); return; }
@@ -203,9 +223,8 @@ async function toDocx(p, chapters, o) {
       });
     });
   });
-  const A4 = o.pageSize !== 'letter';
   const sect = `<w:sectPr>${o.header ? '<w:headerReference w:type="default" r:id="rIdH"/>' : ''}<w:pgSz w:w="${A4 ? 11906 : 12240}" w:h="${A4 ? 16838 : 15840}"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="708" w:footer="708" w:gutter="0"/>${o.header ? '<w:titlePg/>' : ''}</w:sectPr>`;
-  const document = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><w:body>${body}${sect}</w:body></w:document>`;
+  const document = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"><w:body>${body}${sect}</w:body></w:document>`;
   const font = o.font, sz = Math.round(o.size * 2), line = Math.round(240 * o.spacing);
   const st = (id, name, ppr, rpr, based = 'Normal') => `<w:style w:type="paragraph" w:styleId="${id}"><w:name w:val="${name}"/><w:basedOn w:val="${based}"/><w:qFormat/><w:pPr>${ppr}</w:pPr><w:rPr>${rpr}</w:rPr></w:style>`;
   const ind = o.indent ? '<w:ind w:firstLine="720"/>' : '<w:ind w:firstLine="0"/><w:spacing w:after="160"/>';
@@ -213,6 +232,9 @@ async function toDocx(p, chapters, o) {
 <w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="${font}" w:hAnsi="${font}" w:cs="${font}" w:eastAsia="${font}"/><w:sz w:val="${sz}"/><w:szCs w:val="${sz}"/><w:lang w:val="en-US"/></w:rPr></w:rPrDefault><w:pPrDefault><w:pPr><w:spacing w:after="0" w:line="${line}" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults>
 <w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:qFormat/><w:pPr>${ind}${o.justify ? '<w:jc w:val="both"/>' : ''}<w:widowControl/></w:pPr></w:style>
 ${st('FirstParagraph', 'First Paragraph', o.indent ? '<w:ind w:firstLine="0"/>' : '', '')}
+${st('Blank', 'Blank Line', '<w:ind w:firstLine="0"/>', '')}
+${st('Figure', 'Figure', '<w:ind w:firstLine="0"/><w:jc w:val="center"/><w:spacing w:before="200" w:after="120" w:line="240" w:lineRule="auto"/><w:keepNext/>', '')}
+${st('Caption', 'Caption', '<w:ind w:firstLine="0"/><w:jc w:val="center"/><w:spacing w:after="240"/>', `<w:i/><w:sz w:val="${Math.round(sz * 0.85)}"/>`)}
 ${st('Plain', 'Plain', '<w:ind w:firstLine="0"/><w:spacing w:line="240" w:lineRule="auto"/><w:jc w:val="left"/>', '')}
 ${st('Stanza', 'Stanza', '<w:ind w:firstLine="0"/><w:spacing w:after="280"/><w:jc w:val="left"/>', '')}
 ${st('MsTitle', 'Manuscript Title', '<w:spacing w:before="4200" w:after="240"/><w:jc w:val="center"/><w:ind w:firstLine="0"/>', '<w:caps/>')}
@@ -231,13 +253,16 @@ ${st('Header', 'header', '<w:jc w:val="right"/><w:ind w:firstLine="0"/><w:spacin
 </w:styles>`;
   const header = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:hdr xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:p><w:pPr><w:pStyle w:val="Header"/></w:pPr><w:r><w:t xml:space="preserve">${x(surname(p.author))} / ${x(p.title.toUpperCase())} / </w:t></w:r><w:r><w:fldChar w:fldCharType="begin"/></w:r><w:r><w:instrText xml:space="preserve"> PAGE </w:instrText></w:r><w:r><w:fldChar w:fldCharType="separate"/></w:r><w:r><w:t>2</w:t></w:r><w:r><w:fldChar w:fldCharType="end"/></w:r></w:p></w:hdr>`;
   const zip = new JSZip();
-  zip.file('[Content_Types].xml', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>${o.header ? '<Override PartName="/word/header1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml"/>' : ''}<Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/></Types>`);
+  zip.file('[Content_Types].xml', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/>${media.some(m => m.ext === 'png') ? '<Default Extension="png" ContentType="image/png"/>' : ''}${media.some(m => m.ext === 'jpeg') ? '<Default Extension="jpeg" ContentType="image/jpeg"/>' : ''}<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/><Override PartName="/word/settings.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.settings+xml"/>${o.header ? '<Override PartName="/word/header1.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml"/>' : ''}<Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/></Types>`);
   zip.file('_rels/.rels', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/></Relationships>`);
-  zip.file('word/_rels/document.xml.rels', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>${o.header ? '<Relationship Id="rIdH" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/header" Target="header1.xml"/>' : ''}</Relationships>`);
+  zip.file('word/_rels/document.xml.rels', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/><Relationship Id="rIdS" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/settings" Target="settings.xml"/>${o.header ? '<Relationship Id="rIdH" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/header" Target="header1.xml"/>' : ''}${media.map(m => `<Relationship Id="${m.rid}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/${m.name}"/>`).join('')}</Relationships>`);
   zip.file('docProps/core.xml', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"><dc:title>${x(p.title)}</dc:title><dc:creator>${x(p.author || '')}</dc:creator><dcterms:created xsi:type="dcterms:W3CDTF">${new Date().toISOString()}</dcterms:created></cp:coreProperties>`);
   zip.file('word/document.xml', document);
   zip.file('word/styles.xml', styles);
+  // keep lines that end in a manual line break from being stretched in justified text
+  zip.file('word/settings.xml', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><w:settings xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:compat><w:doNotExpandShiftReturn/></w:compat></w:settings>`);
   if (o.header) zip.file('word/header1.xml', header);
+  media.forEach(m => zip.file('word/media/' + m.name, m.b64, { base64: true }));
   return zip.generateAsync({ type: 'blob', mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
 }
 
@@ -289,6 +314,21 @@ async function toPdf(p, chapters, o) {
     if (line.length) flush(true);
     y += gapAfter;
   }
+  function pdfImage(bk) {
+    const im = o.images && o.images.get(bk.img); if (!im) return;
+    const m = /^data:image\/(png|jpe?g);base64,/.exec(im.src); if (!m) return;
+    const maxW = W - 2 * M, capH = bk.cap ? size * 1.6 : 0;
+    let w = maxW * (bk.w || 100) / 100, h = w * (im.h || 1) / (im.w || 1);
+    const maxH = H - 2 * M - capH - size;
+    if (h > maxH) { w = w * maxH / h; h = maxH; }
+    const top = y - size; // y is a text baseline
+    if (top + h + capH > H - M) newPage();
+    const yy = y - size + size * 0.4;
+    doc.addImage(im.src, m[1] === 'png' ? 'PNG' : 'JPEG', (W - w) / 2, yy, w, h);
+    y = yy + h + size * 1.2;
+    if (bk.cap) { doc.setFont(fam, 'italic'); doc.setFontSize(size * 0.85); doc.text(clean(bk.cap), W / 2, y, { align: 'center', maxWidth: maxW }); y += size * 1.6; }
+    y += lead * 0.4;
+  }
   // title page
   if (o.titlePage === 'manuscript') {
     doc.setFont(fam, 'normal'); doc.setFontSize(size);
@@ -319,6 +359,8 @@ async function toPdf(p, chapters, o) {
       } else if (si > 0) { y += lead * 0.4; if (sepText(o.sep)) center(sepText(o.sep), size, 'normal', y); y += lead * 1.2; }
       s.blocks.forEach(bk => {
         if (bk.type === 'hr') { y += lead * 0.4; if (sepText(o.sep)) center(sepText(o.sep), size, 'normal', y); y += lead * 1.2; first = true; return; }
+        if (isBlank(bk)) { y += lead + gapAfter; first = true; return; }
+        if (bk.type === 'img') { pdfImage(bk); first = true; return; }
         if (bk.type === 'h2' || bk.type === 'h3') { y += lead * 0.4; para(bk.runs.map(r => ({ ...r, b: true })), { first: true, justify: false }); first = true; return; }
         if (bk.type === 'quote') { para(bk.runs, { first: true, left: M + 30, right: W - M - 30, italic: true, justify: false }); return; }
         if (bk.type === 'ul' || bk.type === 'ol') { para(bk.runs, { first: true, left: M + 18, prefix: '•', justify: false }); return; }
@@ -350,9 +392,24 @@ p.first,h1+p,h2+p,.sep+p{text-indent:0}
 h1{text-align:center;font-weight:normal;font-size:1.6em;margin:.4em 0 2em}h2{font-size:1.1em;margin:1.6em 0 .8em}h3{font-size:1em;margin:1.2em 0 .6em}
 .sep{text-align:center;margin:1.2em 0;text-indent:0}blockquote{margin:1em 2em;font-style:italic}
 .stanza{text-indent:0;margin-bottom:1em}
+p.blank{text-indent:0;margin:0}p.blank+p{text-indent:0}
+figure.pic{margin:1.2em 0;text-align:center;text-indent:0}figure.pic img{max-width:100%;height:auto}figure.pic figcaption{font-style:italic;font-size:.85em;margin-top:.4em}figure.pic+p{text-indent:0}
 .cover{text-align:center;margin:0;padding:0}.cover img{max-width:100%;max-height:100%}`);
   const manifest = [], spine = [], nav = [];
   let cover = '';
+  const added = new Map();
+  function epubImage(bk) {
+    const im = o.images && o.images.get(bk.img); if (!im) return '';
+    const m = /^data:image\/(png|jpe?g);base64,(.*)$/.exec(im.src); if (!m) return '';
+    let f = added.get(bk.img);
+    if (!f) {
+      const ext = m[1] === 'png' ? 'png' : 'jpg';
+      f = `images/pic${added.size + 1}.${ext}`; added.set(bk.img, f);
+      zip.file('OEBPS/' + f, m[2], { base64: true });
+      manifest.push(`<item id="pic${added.size}" href="${f}" media-type="image/${ext === 'png' ? 'png' : 'jpeg'}"/>`);
+    }
+    return `<figure class="pic"><img src="${f}" alt="${x(bk.cap || '')}" style="width:${bk.w || 100}%"/>${bk.cap ? `<figcaption>${x(bk.cap)}</figcaption>` : ''}</figure>`;
+  }
   if (p.coverImage) {
     const b64 = p.coverImage.split(',')[1];
     zip.file('OEBPS/cover.jpg', b64, { base64: true });
@@ -371,6 +428,8 @@ h1{text-align:center;font-weight:normal;font-size:1.6em;margin:.4em 0 2em}h2{fon
       let first = true;
       s.blocks.forEach(bk => {
         if (bk.type === 'hr') { html += `<p class="sep">${x(sepText(o.sep)) || '&#160;'}</p>`; first = true; return; }
+        if (isBlank(bk)) { html += '<p class="blank">&#160;</p>'; first = true; return; }
+        if (bk.type === 'img') { html += epubImage(bk); first = true; return; }
         if (bk.type === 'h2' || bk.type === 'h3') { html += `<h3>${runs(bk.runs)}</h3>`; first = true; return; }
         if (bk.type === 'quote') { html += `<blockquote><p>${runs(bk.runs)}</p></blockquote>`; return; }
         if (bk.type === 'ul' || bk.type === 'ol') { html += `<p class="first">• ${runs(bk.runs)}</p>`; return; }

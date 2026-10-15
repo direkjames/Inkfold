@@ -1,8 +1,8 @@
 // Inkfold service worker — makes the whole app work offline.
-const VERSION = 'inkfold-v1.3.0';
+const VERSION = 'inkfold-v1.4.0';
 const SHELL = [
   './', './index.html', './styles.css', './manifest.webmanifest',
-  './js/app.js', './js/db.js', './js/model.js', './js/text.js', './js/io.js', './js/sync.js', './js/libs.js', './js/ui.js', './js/stats.js', './js/sound.js', './js/board.js', './js/bible.js', './js/relmap.js', './js/revise.js', './js/screenplay.js', './js/modes.js', './js/timeline.js', './js/compile.js', './js/security.js', './js/palette.js',
+  './js/app.js', './js/db.js', './js/model.js', './js/text.js', './js/io.js', './js/sync.js', './js/libs.js', './js/ui.js', './js/stats.js', './js/sound.js', './js/board.js', './js/bible.js', './js/relmap.js', './js/revise.js', './js/screenplay.js', './js/modes.js', './js/timeline.js', './js/compile.js', './js/security.js', './js/palette.js', './js/images.js', './js/series.js', './js/level.js',
   './icons/icon.svg', './icons/icon-192.png', './icons/icon-512.png', './icons/maskable-512.png', './icons/apple-touch-icon.png',
 ];
 // Libraries used by import/export/sync. Cached up front so they work offline too.

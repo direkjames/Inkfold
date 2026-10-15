@@ -53,7 +53,11 @@ export function renderMap(main, ctx) {
 
   const drawn = mode === 'web' ? all : all.filter(r => relKind(r.data.kind).family || showAll);
   const usedKinds = [...new Set(drawn.map(r => r.data.kind))];
-  $('#rmLegend', main).innerHTML = usedKinds.map(k => { const K = relKind(k); return `<span><i style="--k:${K.color}" class="${k === 'enemy' || k === 'rival' ? 'dash' : ''}"></i>${K.name.replace(/ of$| to$| with$/, '')}</span>`; }).join('');
+  $('#rmLegend', main).innerHTML = mode === 'tree'
+    ? [['Male', GENDER_COLORS.Male], ['Female', GENDER_COLORS.Female], ['Non-binary / other', GENDER_COLORS.Other], ['Gender not set', GENDER_COLORS['']]].map(([n, c]) => `<span><i class="round" style="--k:${c}"></i>${n}</span>`).join('')
+      + `<span><svg class="lg-ring" viewBox="-11 -11 22 22"><g class="ring"><circle r="10" class="ring-bg"/><circle cx="-2.6" r="4.2" class="ring-o"/><circle cx="2.6" r="4.2" class="ring-o"/></g></svg>Married</span>`
+      + (showAll ? usedKinds.filter(k => !relKind(k).family).map(k => { const K = relKind(k); return `<span><i style="--k:${K.color}" class="${k === 'enemy' || k === 'rival' ? 'dash' : ''}"></i>${K.name.replace(/ of$| to$| with$/, '')}</span>`; }).join('') : '')
+    : usedKinds.map(k => { const K = relKind(k); return `<span><i style="--k:${K.color}" class="${k === 'enemy' || k === 'rival' ? 'dash' : ''}"></i>${K.name.replace(/ of$| to$| with$/, '')}</span>`; }).join('');
 
   function drawEdges() {
     const g = $('#rmEdges', svg); g.innerHTML = '';
@@ -85,6 +89,7 @@ export function renderMap(main, ctx) {
 
   function drawNodes() {
     const g = $('#rmNodes', svg); g.innerHTML = '';
+    if (mode === 'tree') return drawTreeNodes(g);
     chars.forEach(c => {
       const p = pos.get(c.id); if (!p) return;
       const d = c.data || {};
@@ -101,10 +106,32 @@ export function renderMap(main, ctx) {
     });
   }
 
+  function drawTreeNodes(g) {
+    chars.forEach(c => {
+      const p = pos.get(c.id); if (!p) return;
+      const d = c.data || {};
+      const col = genderColor(c);
+      const n = document.createElementNS(NS, 'g');
+      n.setAttribute('class', 'rm-node tree' + (treeInfo.loose.includes(c) ? ' loose' : ''));
+      n.setAttribute('transform', `translate(${p.x} ${p.y})`);
+      n.dataset.id = c.id;
+      const clip = 'tclip-' + c.id.replace(/[^\w-]/g, '');
+      const words = (c.title || 'Unnamed').trim().split(/\s+/);
+      const l1 = words[0], l2 = words.slice(1).join(' ');
+      const w = Math.min(140, Math.max(66, Math.max(l1.length, l2.length) * 7.6 + 18));
+      n.innerHTML = `<circle r="${R + 7}" class="halo"/><circle r="${R + 2}" fill="${col}"/>${d.photo
+        ? `<clipPath id="${clip}"><circle r="${R - 3}"/></clipPath><image href="${d.photo}" x="${-R + 3}" y="${-R + 3}" width="${(R - 3) * 2}" height="${(R - 3) * 2}" clip-path="url(#${clip})" preserveAspectRatio="xMidYMid slice"/>`
+        : `<circle r="${R - 3}" fill="${col}" class="t-fill"/><path class="t-sil" d="M0 -14a8 8 0 1 1 0 16a8 8 0 1 1 0-16zM-15 20c0-9 6.5-14 15-14s15 5 15 14z" transform="translate(0 -1)"/>`}
+        <g class="tn-label" transform="translate(0 ${R + 6})"><rect x="${-w / 2}" y="0" width="${w}" height="${l2 ? 32 : 19}" rx="5"/><text text-anchor="middle" y="13">${esc(l1)}</text>${l2 ? `<text text-anchor="middle" y="26">${esc(l2.length > 18 ? l2.slice(0, 17) + '…' : l2)}</text>` : ''}</g>`;
+      g.appendChild(n);
+    });
+  }
+
   function applySelection() {
     svg.classList.toggle('has-sel', !!selected);
     $$('.rm-node', svg).forEach(n => n.classList.toggle('sel', n.dataset.id === selected));
     const linked = new Set([selected]);
+    if (selected && mode === 'tree' && treeInfo && treeInfo.people.includes(selected)) treeInfo.related(selected).forEach(x => linked.add(x));
     $$('.rm-edge', svg).forEach(e => { const on = selected && (e.dataset.a === selected || e.dataset.b === selected); e.classList.toggle('on', !!on); if (on) { linked.add(e.dataset.a); linked.add(e.dataset.b); } });
     $$('.rm-node', svg).forEach(n => n.classList.toggle('linked', linked.has(n.dataset.id)));
     const card = $('#rmCard', main);
@@ -128,7 +155,7 @@ export function renderMap(main, ctx) {
     const pts = [...pos.values()];
     if (!pts.length) { T = { x: 0, y: 0, k: 1 }; return apply(); }
     const xs = pts.map(p => p.x), ys = pts.map(p => p.y);
-    const minX = Math.min(...xs) - 90, maxX = Math.max(...xs) + 90, minY = Math.min(...ys) - 70, maxY = Math.max(...ys) + 90;
+    const minX = Math.min(...xs) - 90, maxX = Math.max(...xs) + 140, minY = Math.min(...ys) - 80, maxY = Math.max(...ys) + 110;
     const W = stage.clientWidth, H = stage.clientHeight;
     const k = Math.max(0.35, Math.min(1.25, Math.min(W / (maxX - minX), H / (maxY - minY))));
     T = { k, x: W / 2 - (minX + maxX) / 2 * k, y: H / 2 - (minY + maxY) / 2 * k };
@@ -213,109 +240,262 @@ function webLayout(chars, all, pos) {
 }
 
 // ---------------------------------------------------------------- Family tree layout (generations)
+// Laid out like a printed family tree: every generation on its own row, partners side by side joined by one line,
+// children hanging from the middle of their parents' line, siblings sharing one bar.
+const GX = 150;          // distance between partners
+const SIB_GAP = 140;     // space between siblings' households
+const FAM_GAP = 210;     // space between different families
+const GY = 200;          // distance between generations
+
+export const GENDER_COLORS = { Male: '#1d7d9a', Female: '#ef6a2c', 'Non-binary': '#8d6cc8', Other: '#8d6cc8', '': '#8b93a1' };
+export const genderColor = c => GENDER_COLORS[(c.data && c.data.gender) || ''] || GENDER_COLORS[''];
+
 function treeLayout(chars, all, pos) {
   const fam = all.filter(r => relKind(r.data.kind).family);
-  const inTree = new Set(); fam.forEach(r => { inTree.add(r.data.a); inTree.add(r.data.b); });
-  const people = chars.filter(c => inTree.has(c.id));
+  const ids = new Set(chars.map(c => c.id));
+  const inTree = new Set(); fam.forEach(r => { if (ids.has(r.data.a) && ids.has(r.data.b)) { inTree.add(r.data.a); inTree.add(r.data.b); } });
+  const people = chars.filter(c => inTree.has(c.id)).map(c => c.id);
   const parents = new Map(), spouses = new Map(), sibs = new Map();
   const add = (m, k, v) => { if (!m.has(k)) m.set(k, []); if (!m.get(k).includes(v)) m.get(k).push(v); };
   fam.forEach(r => {
-    const { a, b, kind } = r.data;
+    const { a, b, kind } = r.data; if (!inTree.has(a) || !inTree.has(b) || a === b) return;
     if (kind === 'parent') add(parents, b, a);
     if (kind === 'spouse') { add(spouses, a, b); add(spouses, b, a); }
     if (kind === 'sibling') { add(sibs, a, b); add(sibs, b, a); }
   });
-  const gen = new Map(people.map(p => [p.id, 0]));
-  for (let pass = 0; pass < 40; pass++) {
+
+  // sibling groups (sibling links + shared parents); members without parents borrow the group's parents
+  const grp = new Map(people.map(id => [id, id]));
+  const find = x => { while (grp.get(x) !== x) { grp.set(x, grp.get(grp.get(x))); x = grp.get(x); } return x; };
+  const unite = (a, b) => { const ra = find(a), rb = find(b); if (ra !== rb) grp.set(ra, rb); };
+  sibs.forEach((list, a) => list.forEach(b => unite(a, b)));
+  const byParents = new Map();
+  parents.forEach((ps, c) => { const k = [...ps].sort().join('|'); if (byParents.has(k)) unite(c, byParents.get(k)); else byParents.set(k, c); });
+  const groupOf = new Map(); people.forEach(id => { const r = find(id); if (!groupOf.has(r)) groupOf.set(r, []); groupOf.get(r).push(id); });
+  const eff = new Map(); // child -> parent ids actually drawn
+  people.forEach(id => {
+    if ((parents.get(id) || []).length) { eff.set(id, [...parents.get(id)].sort()); return; }
+    const mates = groupOf.get(find(id)).filter(x => (parents.get(x) || []).length);
+    if (mates.length) eff.set(id, [...parents.get(mates[0])].sort());
+  });
+  // contradictory data (A parent of B and B parent of A, or longer loops): drop the link that closes the loop
+  { const kids = new Map(); eff.forEach((ps, c) => ps.forEach(p => add(kids, p, c)));
+    const state = new Map(), drop = [];
+    const dfs = (u) => { state.set(u, 1); for (const c of kids.get(u) || []) { if (state.get(c) === 1) drop.push([u, c]); else if (!state.get(c)) dfs(c); } state.set(u, 2); };
+    people.forEach(id => { if (!state.get(id)) dfs(id); });
+    drop.forEach(([p, c]) => { const ps = (eff.get(c) || []).filter(x => x !== p); if (ps.length) eff.set(c, ps); else eff.delete(c); }); }
+  const kidsOf = new Map(); eff.forEach((ps, c) => ps.forEach(p => add(kidsOf, p, c)));
+
+  // partners: married couples, plus two people who share a child (drawn as a couple without the ring)
+  const partners = new Map(); const married = new Set();
+  spouses.forEach((list, a) => list.forEach(b => { add(partners, a, b); married.add([a, b].sort().join('|')); }));
+  eff.forEach(ps => { if (ps.length === 2) { add(partners, ps[0], ps[1]); add(partners, ps[1], ps[0]); } });
+
+  // generations: children one row below parents, partners and siblings on the same row
+  const gen = new Map(people.map(id => [id, 0]));
+  for (let pass = 0; pass < 80; pass++) {
     let changed = false;
-    for (const p of people) {
-      let g = gen.get(p.id);
-      for (const par of parents.get(p.id) || []) g = Math.max(g, gen.get(par) + 1);
-      for (const s of [...(spouses.get(p.id) || []), ...(sibs.get(p.id) || [])]) g = Math.max(g, gen.get(s));
-      if (g !== gen.get(p.id) && g < 40) { gen.set(p.id, g); changed = true; }
-    }
+    const up = (id, v) => { if (v > gen.get(id) && v < 60) { gen.set(id, v); changed = true; } };
+    eff.forEach((ps, c) => ps.forEach(p => { up(c, gen.get(p) + 1); up(p, gen.get(c) - 1); }));
+    partners.forEach((list, a) => list.forEach(b => { up(a, gen.get(b)); up(b, gen.get(a)); }));
+    groupOf.forEach(g => { const m = Math.max(...g.map(x => gen.get(x))); g.forEach(x => up(x, m)); });
     if (!changed) break;
   }
-  const rows = new Map();
-  people.forEach(p => { const g = gen.get(p.id); if (!rows.has(g)) rows.set(g, []); rows.get(g).push(p.id); });
-  const GX = 160, GY = 170;
-  const x = new Map();
-  [...rows.keys()].sort((a, b) => a - b).forEach((g, gi) => {
-    const ids = rows.get(g);
-    const key = id => {
-      const ps = (parents.get(id) || []).filter(p => x.has(p));
-      if (ps.length) return ps.reduce((s, p) => s + x.get(p), 0) / ps.length;
-      const sib = (sibs.get(id) || []).find(s => x.has(s)); if (sib) return x.get(sib);
-      return null;
-    };
-    // group spouses into units
-    const seen = new Set(), units = [];
-    ids.forEach((id, i) => {
-      if (seen.has(id)) return;
-      const unit = [id]; seen.add(id);
-      for (const s of spouses.get(id) || []) if (ids.includes(s) && !seen.has(s)) { unit.push(s); seen.add(s); }
-      unit.sort((a, b) => ((key(b) !== null) - (key(a) !== null)));
-      const ks = unit.map(key).filter(k => k !== null);
-      units.push({ unit, k: ks.length ? ks.reduce((s, v) => s + v, 0) / ks.length : null, i });
-    });
-    let fallback = 0;
-    units.sort((a, b) => (a.k ?? 1e9 + a.i) - (b.k ?? 1e9 + b.i));
-    let cursor = -Infinity;
-    units.forEach(u => {
-      const width = (u.unit.length - 1) * GX;
-      let start = u.k !== null ? u.k - width / 2 : (cursor === -Infinity ? fallback++ * GX : cursor);
-      if (start < cursor) start = cursor;
-      u.unit.forEach((id, j) => x.set(id, start + j * GX));
-      cursor = start + width + GX + 20;
-      void gi;
-    });
+  const minG = Math.min(...people.map(id => gen.get(id)));
+  people.forEach(id => gen.set(id, gen.get(id) - minG));
+
+  // households: partners on the same row, in a line (someone with two partners sits between them)
+  const unitOf = new Map(), units = [];
+  const seen = new Set();
+  const title = id => (chars.find(c => c.id === id) || {}).title || '';
+  [...people].sort((a, b) => title(a).localeCompare(title(b))).forEach(id => {
+    if (seen.has(id)) return;
+    const comp = []; const stack = [id]; seen.add(id);
+    while (stack.length) { const x = stack.pop(); comp.push(x); for (const y of partners.get(x) || []) if (!seen.has(y) && gen.get(y) === gen.get(x)) { seen.add(y); stack.push(y); } }
+    let line = [comp[0]];
+    if (comp.length > 1) {
+      const deg = x => (partners.get(x) || []).filter(y => comp.includes(y)).length;
+      const hub = comp.slice().sort((a, b) => deg(b) - deg(a))[0];
+      line = [hub]; const placed = new Set([hub]);
+      let left = true;
+      for (const y of (partners.get(hub) || []).filter(y => comp.includes(y))) { if (left) line.unshift(y); else line.push(y); placed.add(y); left = !left; }
+      let grew = true;
+      while (grew) { grew = false; for (const end of [line[0], line[line.length - 1]]) for (const y of (partners.get(end) || []).filter(y => comp.includes(y) && !placed.has(y))) { if (end === line[0]) line.unshift(y); else line.push(y); placed.add(y); grew = true; } }
+      comp.filter(x => !placed.has(x)).forEach(x => line.push(x));
+    }
+    const u = { id: units.length, members: line, gen: gen.get(id), x: 0 };
+    units.push(u); line.forEach(m => unitOf.set(m, u));
   });
-  people.forEach(p => pos.set(p.id, { x: x.get(p.id), y: gen.get(p.id) * GY }));
+  const rowsN = Math.max(0, ...units.map(u => u.gen)) + 1;
+  const rows = Array.from({ length: rowsN }, () => []);
+
+  // first ordering: walk the families depth-first so relatives start out next to each other
+  const placedU = new Set();
+  const visit = u => {
+    if (!u || placedU.has(u.id)) return;
+    placedU.add(u.id); rows[u.gen].push(u);
+    for (const m of u.members) for (const p of eff.get(m) || []) visit(unitOf.get(p));
+    const kids = [...new Set(u.members.flatMap(m => kidsOf.get(m) || []))];
+    kids.forEach(k => visit(unitOf.get(k)));
+  };
+  units.filter(u => u.gen === 0).forEach(visit); units.forEach(visit);
+
+  // households belong together when the person in them is a child of the same parents (or the same parentless sibling group)
+  const famOf = m => (eff.get(m) || []).join('|') || ((groupOf.get(find(m)) || []).length > 1 ? 'grp:' + find(m) : '');
+  const familyKey = u => { const keys = [...new Set(u.members.map(famOf).filter(Boolean))]; return keys.length === 1 ? keys[0] : null; };
+  const gapAfter = (a, b) => familyKey(a) && familyKey(a) === familyKey(b) ? SIB_GAP : FAM_GAP;
+  const memberX = id => { const u = unitOf.get(id); return u.x + u.members.indexOf(id) * GX; };
+  const pack = () => rows.forEach(r => { let x = 0; r.forEach((u, i) => { u.x = x; x += (u.members.length - 1) * GX + (r[i + 1] ? gapAfter(u, r[i + 1]) : 0); }); });
+  const parentAnchor = m => { const ps = eff.get(m) || []; return ps.length ? ps.reduce((s, p) => s + memberX(p), 0) / ps.length : null; };
+  const unitTop = u => { const v = u.members.map(parentAnchor).filter(v => v !== null); return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null; };
+  const unitKids = u => [...new Set(u.members.flatMap(m => kidsOf.get(m) || []))];
+  const unitBottom = u => { const k = unitKids(u); return k.length ? k.reduce((s, c) => s + memberX(c), 0) / k.length : null; };
+  const orderMembers = u => {
+    if (u.members.length < 2) return;
+    const a = parentAnchor(u.members[0]), b = parentAnchor(u.members[u.members.length - 1]);
+    if (a !== null && b !== null && a > b) u.members.reverse();
+    else if (a === null && b !== null && u.members.length === 2) { /* keep the child of this family nearest its parents */ const c = u.x + (u.members.length - 1) * GX / 2; if (b < c) u.members.reverse(); }
+    else if (b === null && a !== null && u.members.length === 2) { const c = u.x + (u.members.length - 1) * GX / 2; if (a > c) u.members.reverse(); }
+  };
+  // barycentre sweeps to untangle the order. Children of the same parents always stay side by side:
+  // whole sibling groups move as one, and only then are the siblings ordered inside their group.
+  const sortRow = row => {
+    const blocks = new Map();
+    row.forEach((u, i) => { u.i = i; const key = familyKey(u) || 'u' + u.id; if (!blocks.has(key)) blocks.set(key, []); blocks.get(key).push(u); });
+    const list = [...blocks.values()].map(us => ({ us: us.sort((a, b) => a.k - b.k || a.i - b.i), k: us.reduce((t, u) => t + u.k, 0) / us.length, i: Math.min(...us.map(u => u.i)) }));
+    list.sort((a, b) => a.k - b.k || a.i - b.i);
+    row.splice(0, row.length, ...list.flatMap(b => b.us));
+  };
+  pack();
+  for (let it = 0; it < 6; it++) {
+    for (let g = 1; g < rowsN; g++) { rows[g].forEach(u => { u.k = unitTop(u); if (u.k === null) u.k = u.x; }); sortRow(rows[g]); pack(); rows[g].forEach(orderMembers); }
+    for (let g = rowsN - 2; g >= 0; g--) { rows[g].forEach(u => { u.k = unitBottom(u); if (u.k === null) u.k = u.x; }); sortRow(rows[g]); pack(); }
+  }
+  rows.forEach(r => r.forEach(orderMembers));
+
+  // coordinates: keep the order, put each household as close as possible to where it wants to be
+  // (under its parents / over its children), never closer to its neighbour than the gap allows
+  function place(row, desired, weight) {
+    // isotonic regression (pool adjacent violators) on left edges with minimum spacing
+    const n = row.length; if (!n) return;
+    const off = [0];
+    for (let i = 1; i < n; i++) { const a = row[i - 1], b = row[i]; off[i] = off[i - 1] + (a.members.length - 1) * GX + gapAfter(a, b); }
+    const blocks = [];
+    for (let i = 0; i < n; i++) {
+      blocks.push({ w: weight[i], v: desired[i] - off[i], n: 1, start: i });
+      while (blocks.length > 1 && blocks[blocks.length - 2].v > blocks[blocks.length - 1].v) {
+        const b = blocks.pop(), a = blocks[blocks.length - 1];
+        const w = a.w + b.w; a.v = (a.v * a.w + b.v * b.w) / w; a.w = w; a.n += b.n;
+      }
+    }
+    blocks.forEach(b => { for (let i = b.start; i < b.start + b.n; i++) row[i].x = b.v + off[i]; });
+  }
+  const width = u => (u.members.length - 1) * GX;
+  const topDown = g => {
+    const row = rows[g];
+    // households that are siblings get the same target so the group is centred under the parents
+    const desired = row.map(u => {
+      const tops = u.members.map((m, j) => { const a = parentAnchor(m); return a === null ? null : a - j * GX; }).filter(v => v !== null);
+      return tops.length ? tops.reduce((a, b) => a + b, 0) / tops.length : null;
+    });
+    // centre each sibling run on its parents
+    let i = 0;
+    while (i < row.length) {
+      let j = i; const key = familyKey(row[i]);
+      while (key && j + 1 < row.length && familyKey(row[j + 1]) === key) j++;
+      if (key && j > i && !key.startsWith('grp:')) {
+        const anchor = parentAnchor(row[i].members.find(m => famOf(m) === key));
+        let span = 0; const offs = [];
+        for (let k = i; k <= j; k++) { offs.push(span); span += width(row[k]) + (k < j ? SIB_GAP : 0); }
+        const kidsMid = []; for (let k = i; k <= j; k++) { const idx = row[k].members.findIndex(m => famOf(m) === key); kidsMid.push(offs[k - i] + idx * GX); }
+        const mid = kidsMid.reduce((a, b) => a + b, 0) / kidsMid.length;
+        for (let k = i; k <= j; k++) desired[k] = anchor - mid + offs[k - i];
+      }
+      i = j + 1;
+    }
+    place(row, desired.map((d, k) => d === null ? row[k].x : d), desired.map(d => d === null ? 0.05 : 1));
+  };
+  const bottomUp = g => {
+    const row = rows[g];
+    const desired = row.map(u => { const b = unitBottom(u); return b === null ? null : b - width(u) / 2; });
+    place(row, desired.map((d, k) => d === null ? row[k].x : d), row.map((u, k) => desired[k] === null ? 0.05 : unitKids(u).length));
+  };
+  for (let it = 0; it < 12; it++) {
+    for (let g = rowsN - 2; g >= 0; g--) bottomUp(g);
+    for (let g = 1; g < rowsN; g++) topDown(g);
+  }
+
+  people.forEach(id => pos.set(id, { x: memberX(id), y: gen.get(id) * GY }));
   // people outside the family: a row underneath
   const loose = chars.filter(c => !inTree.has(c.id));
-  const maxG = people.length ? Math.max(...people.map(p => gen.get(p.id))) : -1;
-  const xs = people.map(p => x.get(p.id)); const midX = xs.length ? (Math.min(...xs) + Math.max(...xs)) / 2 : 0;
-  loose.forEach((c, i) => pos.set(c.id, { x: midX + (i - (loose.length - 1) / 2) * GX, y: (maxG + 1) * GY + 70 }));
-  return { parents, spouses, sibs, gen, loose, people };
+  const xs = people.map(id => pos.get(id).x); const midX = xs.length ? (Math.min(...xs) + Math.max(...xs)) / 2 : 0;
+  loose.forEach((c, i) => pos.set(c.id, { x: midX + (i - (loose.length - 1) / 2) * GX, y: rowsN * GY + 60 }));
+  const related = id => new Set([id, ...(eff.get(id) || []), ...(kidsOf.get(id) || []), ...(partners.get(id) || []), ...(groupOf.get(find(id)) || [])]);
+  return { units, unitOf, eff, kidsOf, partners, married, groupOf: [...groupOf.values()], gen, loose, people, related };
 }
 
 function drawTreeLinks(g, info, pos) {
   if (!info) return;
-  const pc = relKind('parent').color, sc = relKind('spouse').color, sbc = relKind('sibling').color;
   let html = '';
-  // spouses
-  const done = new Set();
-  info.spouses.forEach((list, a) => list.forEach(b => {
-    const k = [a, b].sort().join('|'); if (done.has(k)) return; done.add(k);
-    const A = pos.get(a), B = pos.get(b); if (!A || !B) return;
-    if (Math.abs(A.y - B.y) < 1) html += `<line x1="${Math.min(A.x, B.x) + R}" y1="${A.y}" x2="${Math.max(A.x, B.x) - R}" y2="${B.y}" stroke="${sc}" class="tl spouse"/>`;
-    else html += `<path d="M${A.x} ${A.y}L${B.x} ${B.y}" stroke="${sc}" class="tl spouse"/>`;
-  }));
-  // children grouped by parent set
-  const groups = new Map();
-  info.parents.forEach((ps, child) => { const k = [...ps].sort().join('|'); if (!groups.has(k)) groups.set(k, { ps, kids: [] }); groups.get(k).kids.push(child); });
-  groups.forEach(({ ps, kids }) => {
-    const P = ps.map(p => pos.get(p)).filter(Boolean); const K = kids.map(k => pos.get(k)).filter(Boolean);
-    if (!P.length || !K.length) return;
-    const married = ps.length === 2 && (info.spouses.get(ps[0]) || []).includes(ps[1]) && Math.abs(P[0].y - P[1].y) < 1;
-    const ax = P.reduce((s, p) => s + p.x, 0) / P.length;
-    const ay = married ? P[0].y : Math.max(...P.map(p => p.y)) + R + 22;
-    const top = Math.min(...K.map(k => k.y)) - R - 26;
-    const midY = Math.max(ay + 24, top);
-    if (!married) P.forEach(p => { html += `<path d="M${p.x} ${p.y + R + 22}V${p.y + R + 30}" stroke="${pc}" class="tl"/>`; });
-    if (!married && P.length > 1) html += `<path d="M${Math.min(...P.map(p => p.x))} ${ay}H${Math.max(...P.map(p => p.x))}" stroke="${pc}" class="tl"/>`;
-    const minX = Math.min(ax, ...K.map(k => k.x)), maxX = Math.max(ax, ...K.map(k => k.x));
-    html += `<path d="M${ax} ${ay + (married ? 0 : 0)}V${midY}M${minX} ${midY}H${maxX}${K.map(k => `M${k.x} ${midY}V${k.y - R - 24}`).join('')}" stroke="${pc}" class="tl"/>`;
+  const LABEL = 40; // the name label under each circle
+  // couples: one line between partners; married couples get a ring in the middle
+  info.units.forEach(u => {
+    for (let i = 0; i + 1 < u.members.length; i++) {
+      const a = u.members[i], b = u.members[i + 1];
+      if (!(info.partners.get(a) || []).includes(b)) continue;
+      const A = pos.get(a), B = pos.get(b); const y = A.y;
+      const x1 = A.x + R + 3, x2 = B.x - R - 3, mx = (A.x + B.x) / 2;
+      if (info.married.has([a, b].sort().join('|'))) {
+        html += `<path d="M${x1} ${y - 3}H${x2}M${x1} ${y + 3}H${x2}" class="tl t couple"/>`;
+        html += `<g class="ring" transform="translate(${mx} ${y})"><circle r="10" class="ring-bg"/><circle cx="-2.6" r="4.2" class="ring-o"/><circle cx="2.6" r="4.2" class="ring-o"/></g>`;
+      } else {
+        html += `<path d="M${x1} ${y}H${x2}" class="tl t"/><circle cx="${mx}" cy="${y}" r="4" class="tl-dot"/>`;
+      }
+    }
   });
-  // siblings with no recorded parents: a dashed bracket above them
-  const sdone = new Set();
-  info.sibs.forEach((list, a) => list.forEach(b => {
-    const k = [a, b].sort().join('|'); if (sdone.has(k)) return; sdone.add(k);
-    const pa = info.parents.get(a) || [], pb = info.parents.get(b) || [];
-    if (pa.some(p => pb.includes(p))) return;
-    const A = pos.get(a), B = pos.get(b); if (!A || !B) return;
-    const y = Math.min(A.y, B.y) - R - 30;
-    html += `<path d="M${A.x} ${A.y - R - 24}V${y}H${B.x}V${B.y - R - 24}" stroke="${sbc}" class="tl dash"/>`;
-  }));
+  // children: grouped by their parents, hanging from one bar
+  const groups = new Map();
+  info.eff.forEach((ps, c) => { const k = ps.join('|'); if (!groups.has(k)) groups.set(k, { ps, kids: [] }); groups.get(k).kids.push(c); });
+  // sibling groups with no parents in the tree get a bar with a stub (their parents aren't shown)
+  info.groupOf.forEach(m => { if (m.length > 1 && !m.some(x => info.eff.has(x))) groups.set('none:' + m.join('|'), { ps: [], kids: m }); });
+  // stagger bars that would overlap on the same row
+  const bars = [];
+  groups.forEach(gp => {
+    const K = gp.kids.map(k => pos.get(k)).filter(Boolean); if (!K.length) return;
+    const P = gp.ps.map(p => pos.get(p)).filter(Boolean);
+    const together = P.length === 2 && Math.abs(P[0].y - P[1].y) < 1 && Math.abs(P[0].x - P[1].x) <= GX + 1;
+    const ax = P.length ? P.reduce((s, p) => s + p.x, 0) / P.length : K.reduce((s, k) => s + k.x, 0) / K.length;
+    const ay = P.length === 0 ? null : together || P.length === 1 ? (P.length === 1 ? P[0].y + R + LABEL : P[0].y + 13) : Math.max(...P.map(p => p.y)) + R + LABEL;
+    const top = Math.min(...K.map(k => k.y)) - R - 4;
+    const lo = Math.min(ax, ...K.map(k => k.x)), hi = Math.max(ax, ...K.map(k => k.x));
+    bars.push({ gp, P, K, ax, ay, top, lo, hi, together });
+  });
+  const levels = new Map();
+  bars.sort((a, b) => a.lo - b.lo).forEach(b => {
+    const key = Math.round(b.top); const used = levels.get(key) || [];
+    let lv = 0; while (used.some(x => x.lv === lv && !(b.lo > x.hi + 12 || b.hi < x.lo - 12))) lv++;
+    used.push({ lv, lo: b.lo, hi: b.hi }); levels.set(key, used); b.lv = lv;
+  });
+  bars.forEach(b => {
+    const barY = b.top - 26 - b.lv * 12;
+    let d = '';
+    if (b.ay === null) d += `M${b.ax} ${barY - 16}V${barY}`;
+    else {
+      if (b.P.length === 2 && !b.together) { // parents far apart: join them first
+        b.P.forEach(p => { d += `M${p.x} ${p.y + R + LABEL}V${b.ay}`; });
+        d += `M${Math.min(...b.P.map(p => p.x))} ${b.ay}H${Math.max(...b.P.map(p => p.x))}`;
+      }
+      d += `M${b.ax} ${b.ay}V${barY}`;
+    }
+    d += `M${b.lo} ${barY}H${b.hi}`;
+    b.K.forEach(k => { d += `M${k.x} ${barY}V${k.y - R - 4}`; });
+    html += `<path d="${d}" class="tl t"/>`;
+    if (b.ay === null) html += `<circle cx="${b.ax}" cy="${barY - 16}" r="4" class="tl-dot"/>`;
+  });
+  // married-in partners (no parents shown, partner of someone who has them): a short stub with a dot
+  info.units.forEach(u => {
+    if (!u.members.some(m => info.eff.has(m))) return;
+    u.members.filter(m => !info.eff.has(m)).forEach(m => { const P = pos.get(m); html += `<path d="M${P.x} ${P.y - R - 4}V${P.y - R - 22}" class="tl t"/><circle cx="${P.x}" cy="${P.y - R - 22}" r="4" class="tl-dot"/>`; });
+  });
   g.insertAdjacentHTML('beforeend', html);
 }
