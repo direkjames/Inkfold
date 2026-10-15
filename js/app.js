@@ -22,7 +22,7 @@ import * as sync from './sync.js';
 import { loadLib, LIBS } from './libs.js';
 import { ICONS, icon, MARK, $, $$, esc, num, el, debounce, ago, haptic, toast, errorToast, closePop, popOpen, popover, menu, sheets, sheet, confirmSheet } from './ui.js';
 
-const VERSION = '1.5.0';
+const VERSION = '1.5.1';
 
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape') {
