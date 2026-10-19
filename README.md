@@ -102,6 +102,12 @@ A new **Map** view (next to Write, Board, Outline, Timeline and Bible) for novel
 - **Custom profile tabs.** Add tabs like "Royal Titles" to character profiles, with your own fields. A tab can be on every character (shared layout) or only on one.
 - **Family tree, reorganised.** Each generation sits on its own row; couples are joined by one line (a ring for married couples); children hang from the middle of their parents' line; siblings share one bar; married-in partners get a small stub. Circles are coloured by the new Gender field.
 
+## What's new in 1.6.0
+
+- **Import from Mapfold.** Maps you share from Mapfold (the sister worldbuilding app on the same domain and browser) can be imported into Inkfold's Map view: the picture, scale, pins, labels, regions, routes and pins that open nested maps. Places from Mapfold's wiki are added to your story bible, with their notes. Open **Maps → Import from Mapfold**.
+- **Stay in sync.** A linked map shows "Linked from Mapfold" with **Check for update**. Updating refreshes what came from Mapfold, removes things deleted there, and leaves anything you drew in Inkfold alone. You also get a notice when Mapfold shares a newer version.
+- Secrets never cross over: Mapfold leaves them out of what it shares.
+
 ## What's new in 1.5.6
 
 - When a privacy browser such as Brave blocks the feature devices use to find each other, Nearby Sync now says so right away (including on Offline QR) and tells you the setting to change, instead of a generic Wi-Fi error.
@@ -149,6 +155,7 @@ A new **Map** view (next to Write, Board, Outline, Timeline and Bible) for novel
 | `js/level.js` | EXP and levels |
 | `js/series.js` | Series: shared story bible, joining and leaving |
 | `js/images.js` | Pictures in scenes (shrinking, storing, showing) |
+| `js/mapfold.js` | Import from Mapfold: reads Mapfold's shared maps, creates and re-syncs maps, marks and places |
 | `js/maps.js` | Maps, pins, labels, regions, routes, layers, ruler, scene places, journeys, map export |
 | `js/sound.js` | Ambient soundscapes and timer chime |
 | `js/ui.js` | Icons, sheets, menus, toasts |
