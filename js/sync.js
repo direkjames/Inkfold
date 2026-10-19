@@ -207,7 +207,11 @@ export function runSession(channel, { onStatus, onDone, onError, close, confirm 
     peer = { id: m.deviceId, name: String(m.name || 'Other device').slice(0, 40) };
     if (confirm) {
       onStatus(`${peer.name} wants to sync with this device.`);
-      if (!(await confirm(peer))) { try { await channel.send({ t: 'deny' }); } catch {} return fail(new Error('Sync was cancelled on this device.')); }
+      // keeps the other device informed (and its stall timer quiet) while this one waits for a tap
+      const waiting = setInterval(() => channel.send({ t: 'wait', name: me.name }).catch(() => {}), 4000);
+      const ok = await Promise.race([confirm(peer), new Promise(r => setTimeout(() => r(false), 120000))]);
+      clearInterval(waiting);
+      if (!ok) { try { await channel.send({ t: 'deny' }); } catch {} return fail(new Error('Sync was cancelled on this device.')); }
     }
     onStatus(`Connected to ${peer.name}. Saving a snapshot…`);
     await db.snapshot(`Before sync with ${peer.name}`);
@@ -226,6 +230,7 @@ export function runSession(channel, { onStatus, onDone, onError, close, confirm 
       if (m.t === 'hello') await onHello(m);
       else if (m.t === 'data') { if (!peer) return; remoteData = m.data; onStatus(`Received ${peer.name}’s library…`); await tryMerge(); }
       else if (m.t === 'done') { peerDone = true; finish(); }
+      else if (m.t === 'wait') onStatus(`Waiting for ${String(m.name || 'the other device').slice(0, 40)} to approve…`);
       else if (m.t === 'deny') fail(new Error('The other device declined the sync.'));
     } catch (e) { fail(e); }
   };
@@ -264,12 +269,22 @@ const ALPHA = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 export const newCode = () => Array.from(crypto.getRandomValues(new Uint8Array(6)), b => ALPHA[b % ALPHA.length]).join('');
 const peerId = code => 'inkfold-v1-' + code.toLowerCase().replace(/[^a-z0-9]/g, '');
 const NET_MSG = 'Pairing codes need internet for a moment. Use Offline (QR) instead.';
-const peerErr = (e, joining) => new Error(
+const BROKER_MS = 12000;
+const PEER_CONFIG = {
+  iceServers: [
+    { urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:stun1.l.google.com:19302' }, { urls: 'stun:stun.cloudflare.com:3478' },
+    { urls: ['turn:eu-0.turn.peerjs.com:3478', 'turn:us-0.turn.peerjs.com:3478'], username: 'peerjs', credential: 'peerjsp' },
+  ],
+  sdpSemantics: 'unified-plan',
+};
+const peerErr = e => new Error(
   e.type === 'unavailable-id' ? 'That code is busy. Generate a new one.'
   : e.type === 'peer-unavailable' ? 'No device is showing that code. Check it and try again.'
   : ['network', 'server-error', 'socket-error', 'socket-closed'].includes(e.type) ? NET_MSG
   : (e.message || 'Connection failed'));
 
+// Raw strings: Inkfold already chunks and encodes its own messages, and PeerJS's JSON mode rejects anything over 16 KB after re-encoding.
+const SERIALIZATION = 'raw';
 function wrapPeerConn(conn) {
   const ch = new Channel(s => conn.send(s), () => (conn.dataChannel ? conn.dataChannel.bufferedAmount : 0));
   conn.on('data', d => ch.receive(d));
@@ -277,40 +292,70 @@ function wrapPeerConn(conn) {
   return ch;
 }
 
+// Watches the WebRTC link PeerJS builds, so a link that can't form is reported with what was tried instead of hanging.
+function watchPeerLink(conn, onFail) {
+  const seen = { host: 0, srflx: 0, relay: 0, mdns: 0 };
+  let tries = 0;
+  const attach = () => {
+    const pc = conn.peerConnection;
+    if (!pc) { if (++tries < 40) setTimeout(attach, 50); return; }
+    pc.addEventListener('icecandidate', e => {
+      const c = e.candidate && e.candidate.candidate; if (!c) return;
+      const t = /typ (host|srflx|relay)/.exec(c); if (t) seen[t[1]]++;
+      if (/\.local\s/.test(c)) seen.mdns++;
+    });
+    pc.addEventListener('iceconnectionstatechange', () => { if (pc.iceConnectionState === 'failed') onFail(); });
+  };
+  attach();
+  return () => `Tried ${seen.host} local, ${seen.srflx} public and ${seen.relay} relay routes.`;
+}
+
 export async function hostWithCode(code, handlers) {
   await loadLib(LIBS.peerjs);
   const h = guarded(handlers);
-  const peer = new window.Peer(peerId(code), { debug: 0 });
-  let stopSession = null, active = false;
-  const cleanup = () => { try { stopSession && stopSession(); } catch {} try { peer.destroy(); } catch {} };
-  peer.on('error', e => h.onError(peerErr(e)));
+  const peer = new window.Peer(peerId(code), { debug: 0, config: PEER_CONFIG });
+  let stopSession = null, active = false, timer = null;
+  const cleanup = () => { clearTimeout(timer); try { stopSession && stopSession(); } catch {} try { peer.destroy(); } catch {} };
+  const brokerTimer = setTimeout(() => { if (!peer.open) { h.onError(new Error(NET_MSG)); cleanup(); } }, BROKER_MS);
+  peer.on('error', e => { clearTimeout(brokerTimer); h.onError(peerErr(e)); });
   peer.on('disconnected', () => { if (!peer.destroyed && !active) try { peer.reconnect(); } catch {} });
-  peer.on('open', () => handlers.onStatus('Waiting for the other device…'));
+  peer.on('open', () => { clearTimeout(brokerTimer); handlers.onStatus('Waiting for the other device…'); });
   peer.on('connection', conn => {
     if (active) { conn.on('open', () => conn.close()); return; } // one device at a time
     active = true;
     handlers.onStatus('Connecting to your other device…');
+    const diag = watchPeerLink(conn, () => { h.onError(new Error(`Couldn’t connect to the other device. ${WIFI_HINT} ${diag()}`)); cleanup(); });
+    timer = setTimeout(() => { if (!stopSession) { h.onError(new Error(`Couldn’t connect to the other device. ${WIFI_HINT} ${diag()}`)); cleanup(); } }, CONNECT_MS);
     const ch = wrapPeerConn(conn);
-    conn.on('error', e => h.onError(e));
-    conn.on('open', () => { stopSession = runSession(ch, { ...h, confirm: handlers.confirm, close: cleanup }); });
+    conn.on('error', e => h.onError(new Error(e.message || 'Connection failed')));
+    conn.on('open', () => { clearTimeout(timer); stopSession = runSession(ch, { onStatus: h.onStatus, onDone: h.onDone, onError: h.onError, confirm: handlers.confirm, close: cleanup }); });
   });
-  return cleanup;
+  return () => { clearTimeout(brokerTimer); cleanup(); };
 }
 
 export async function joinWithCode(code, handlers) {
   await loadLib(LIBS.peerjs);
   const h = guarded(handlers);
-  const peer = new window.Peer({ debug: 0 });
+  const peer = new window.Peer({ debug: 0, config: PEER_CONFIG });
   let stopSession = null, timer = null;
   const cleanup = () => { clearTimeout(timer); try { stopSession && stopSession(); } catch {} try { peer.destroy(); } catch {} };
-  peer.on('error', e => h.onError(peerErr(e, true)));
+  timer = setTimeout(() => { if (!peer.open) { h.onError(new Error(NET_MSG)); cleanup(); } }, BROKER_MS);
+  peer.on('error', e => { clearTimeout(timer); h.onError(peerErr(e)); });
   peer.on('open', () => {
-    handlers.onStatus('Connecting…');
-    const conn = peer.connect(peerId(code), { reliable: true, serialization: 'json' });
+    clearTimeout(timer);
+    handlers.onStatus('Looking for the other device…');
+    const conn = peer.connect(peerId(code), { reliable: true, serialization: SERIALIZATION });
+    const fail = () => { h.onError(new Error(`Couldn’t connect to the other device. ${WIFI_HINT} ${diag()}`)); cleanup(); };
+    const diag = watchPeerLink(conn, fail);
     const ch = wrapPeerConn(conn);
-    timer = setTimeout(() => { if (!stopSession) { h.onError(new Error(`Couldn’t reach the other device. ${WIFI_HINT}`)); cleanup(); } }, CONNECT_MS);
-    conn.on('error', e => h.onError(e));
-    conn.on('open', () => { clearTimeout(timer); stopSession = runSession(ch, { ...h, close: cleanup }); });
+    timer = setTimeout(() => { if (!stopSession) fail(); }, CONNECT_MS);
+    conn.on('error', e => h.onError(new Error(e.message || 'Connection failed')));
+    conn.on('open', () => {
+      clearTimeout(timer);
+      handlers.onStatus('Connected. Waiting for the other device to approve…');
+      // the device that shows the code approves; this one just waits (no confirm here)
+      stopSession = runSession(ch, { onStatus: h.onStatus, onDone: h.onDone, onError: h.onError, close: cleanup });
+    });
   });
   return cleanup;
 }
