@@ -2,7 +2,7 @@
 import { uid } from './db.js';
 import { touch } from './model.js';
 import { htmlToText } from './text.js';
-import { $, $$, esc, num, el, icon, popover, closePop, menu, sheet, confirmSheet, haptic, toast, debounce } from './ui.js';
+import { $, $$, esc, num, el, icon, popover, closePop, menu, sheet, confirmSheet, haptic, toast, debounce, pickFiles } from './ui.js';
 import { renderMap } from './relmap.js';
 
 let ctx; // { state, saveItem, openScene, findInScene, onChange }
@@ -211,9 +211,10 @@ function renderDetail(main, it, root) {
   };
   $$('[data-rmtrait]', main).forEach(b => b.onclick = () => { d.traits.splice(+b.dataset.rmtrait, 1); save(); renderDetail(main, it, root); });
   const back = $('[data-back]', main); if (back) back.onclick = () => { selected = null; renderBible(root); };
-  $('[data-photo]', main).onclick = () => pickPhoto(it, () => { save(); renderBible(root); });
+  const persist = async () => { await ctx.saveItem(it); ctx.onChange && ctx.onChange({ skipView: true }); renderBible(root); };
+  $('[data-photo]', main).onclick = () => pickPhoto(it, persist);
   $('[data-entry-menu]', main).onclick = e => menu(e.currentTarget, [
-    ...(d.photo ? [{ k: 'rmphoto', icon: 'image', label: 'Remove photo', run: () => { delete d.photo; save(); renderBible(root); } }] : []),
+    ...(d.photo ? [{ k: 'rmphoto', icon: 'image', label: 'Remove photo', run: async () => { delete d.photo; await persist(); } }] : []),
     { k: 'del', icon: 'trash', label: `Delete ${KINDS[it.type].one.toLowerCase()}`, danger: true, run: async () => {
       if (!(await confirmSheet({ title: `Delete “${esc(it.title || 'Unnamed')}”?`, sub: 'It moves to Trash for 30 days. Its relationships are removed with it.', confirm: 'Delete', danger: true }))) return;
       const now = Date.now();
@@ -419,20 +420,25 @@ function mentions(it, box, root) {
   $$('[data-goto]', box).forEach(b => b.onclick = () => { const t = ctx.state.items.find(i => i.id === b.dataset.goto); tab = t.type; selected = t.id; renderBible(root); });
 }
 
+const PHOTO_MAX_BYTES = 40 * 1024 * 1024;
 async function pickPhoto(it, done) {
-  const fi = el('<input type="file" accept="image/*">');
-  fi.onchange = async () => {
-    const f = fi.files[0]; if (!f) return;
-    const url = URL.createObjectURL(f);
-    try {
-      const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = url; });
-      const S = 360, c = document.createElement('canvas'); c.width = S; c.height = S;
-      const k = Math.max(S / img.width, S / img.height);
-      c.getContext('2d').drawImage(img, (S - img.width * k) / 2, (S - img.height * k) / 2.6, img.width * k, img.height * k);
-      it.data.photo = c.toDataURL('image/jpeg', 0.82); done();
-    } catch { toast('That image couldn’t be opened.'); } finally { URL.revokeObjectURL(url); }
-  };
-  fi.click();
+  const [f] = await pickFiles({ accept: 'image/*' });
+  if (!f) return;
+  if (!/^image\//.test(f.type) && !/\.(jpe?g|png|webp|gif|avif|bmp)$/i.test(f.name)) return toast('Choose an image file (JPG, PNG or WebP).');
+  if (f.size > PHOTO_MAX_BYTES) return toast('That picture is too large. Choose one under 40 MB.');
+  const url = URL.createObjectURL(f);
+  try {
+    const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = url; });
+    const w = img.naturalWidth || img.width, h = img.naturalHeight || img.height;
+    if (!w || !h) throw new Error('empty');
+    const S = 360, c = document.createElement('canvas'); c.width = S; c.height = S;
+    const k = Math.max(S / w, S / h);
+    c.getContext('2d').drawImage(img, (S - w * k) / 2, (S - h * k) / 2.6, w * k, h * k);
+    it.data = it.data || {};
+    it.data.photo = c.toDataURL('image/jpeg', 0.82);
+    await done();
+    haptic(8);
+  } catch { toast('That image couldn’t be opened.'); } finally { URL.revokeObjectURL(url); }
 }
 
 // ---------------------------------------------------------------- Relationship editor

@@ -99,6 +99,20 @@ export const $ = (s, el = document) => el.querySelector(s);
 export const $$ = (s, el = document) => Array.from(el.querySelectorAll(s));
 export const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 export const num = n => (n || 0).toLocaleString();
+// Opens the system file picker. The input has to live in the real document (one made by el() belongs to an inert
+// template document, so browsers silently ignore its click). Resolves with the chosen files, or [] if cancelled.
+export function pickFiles({ accept = '*/*', multiple = false } = {}) {
+  return new Promise(resolve => {
+    const fi = document.createElement('input');
+    fi.type = 'file'; fi.accept = accept; fi.multiple = multiple; fi.hidden = true;
+    document.body.appendChild(fi);
+    let settled = false;
+    const finish = files => { if (settled) return; settled = true; setTimeout(() => fi.remove(), 0); resolve(files); };
+    fi.addEventListener('change', () => finish(Array.from(fi.files || [])));
+    fi.addEventListener('cancel', () => finish([]));
+    fi.click();
+  });
+}
 export const el = html => { const t = document.createElement('template'); t.innerHTML = html.trim(); return t.content.firstElementChild; };
 export const debounce = (fn, ms) => { let t; const d = (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; d.flush = (...a) => { clearTimeout(t); return fn(...a); }; return d; };
 export function ago(ts) {

@@ -20,9 +20,9 @@ import { computeExp, EXP_RULES } from './level.js';
 import { initMaps, renderMaps, scenePlaceSheet, castSheet, castCount, placeName, showOnMap, allMaps } from './maps.js';
 import * as sync from './sync.js';
 import { loadLib, LIBS } from './libs.js';
-import { ICONS, icon, MARK, $, $$, esc, num, el, debounce, ago, haptic, toast, errorToast, closePop, popOpen, popover, menu, sheets, sheet, confirmSheet } from './ui.js';
+import { ICONS, icon, MARK, $, $$, esc, num, el, debounce, ago, haptic, toast, errorToast, closePop, popOpen, popover, menu, sheets, sheet, confirmSheet, pickFiles } from './ui.js';
 
-const VERSION = '1.5.1';
+const VERSION = '1.5.3';
 
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape') {
@@ -1383,10 +1383,10 @@ async function projectSheet(focus) {
   });
   const thumb = () => { const c = COVERS[cover % COVERS.length]; const t = $('#pd-thumb', s.wrap); t.style.background = coverImage ? `center/cover url('${coverImage}')` : c.bg; t.innerHTML = coverImage ? '' : `<span style="color:${c.fg}">${esc($('#pd-title', s.wrap).value || p.title)}</span>`; $('#pd-remove', s.wrap).hidden = !coverImage; };
   $$('.cover-pick', s.wrap).forEach(b => b.onclick = () => { cover = +b.dataset.i; coverImage = null; $$('.cover-pick', s.wrap).forEach(x => x.classList.toggle('on', x === b)); thumb(); });
-  $('#pd-upload', s.wrap).onclick = () => {
-    const fi = el('<input type="file" accept="image/*">');
-    fi.onchange = async () => { if (!fi.files[0]) return; try { coverImage = await coverFromFile(fi.files[0]); thumb(); } catch (e) { errorToast(e); } };
-    fi.click();
+  $('#pd-upload', s.wrap).onclick = async () => {
+    const [f] = await pickFiles({ accept: 'image/*' });
+    if (!f) return;
+    try { coverImage = await coverFromFile(f); thumb(); } catch (e) { errorToast(e); }
   };
   $('#pd-remove', s.wrap).onclick = () => { coverImage = null; thumb(); };
   thumb();
@@ -1861,15 +1861,18 @@ async function purgeOldTrash() {
 }
 
 // ---------------------------------------------------------------- Nearby Sync
-function syncSheet() {
-  let cleanup = null, scanStop = null, mode = 'code';
+async function syncSheet() {
+  await saveNow(); // so the scene being typed right now goes along
+  let cleanup = null, scanStop = null, mode = 'code', wake = null;
+  navigator.wakeLock?.request('screen').then(w => { wake = w; }).catch(() => {});
   const s = sheet({ title: 'Nearby Sync', sub: 'Sync your library with another device. Your writing goes straight from one device to the other and is never stored online.', foot: null,
-    onClose: () => { cleanup && cleanup(); scanStop && scanStop(); } });
+    onClose: () => { cleanup && cleanup(); scanStop && scanStop(); try { wake && wake.release(); } catch {} } });
   const body = s.body;
 
   const handlers = {
     onStatus: msg => { const sl = $('#sync-status', body); if (sl) sl.innerHTML = `<span class="spinner"></span><span>${esc(msg)}</span>`; else progress(msg); },
-    onError: e => { console.error(e); haptic(30); view(`<div class="sync-big"><div class="done-mark" style="background:color-mix(in srgb,var(--danger) 12%,transparent);color:var(--danger)">${icon('x')}</div><b style="font-size:16px">Couldn’t sync</b><p class="note" style="max-width:40ch">${esc(e.message || 'The connection dropped.')} Make sure both devices are on the same Wi-Fi and have Inkfold open.</p><button class="btn btn-quiet" data-back>Try again</button></div>`); },
+    confirm: peer => confirmSheet({ title: `Sync with ${esc(peer.name)}?`, sub: 'Only continue if you just entered this code on that device. Your libraries will be merged and a snapshot is saved first.', confirm: 'Sync' }),
+    onError: e => { console.error(e); if (cleanup) { try { cleanup(); } catch {} cleanup = null; } haptic(30); view(`<div class="sync-big"><div class="done-mark" style="background:color-mix(in srgb,var(--danger) 12%,transparent);color:var(--danger)">${icon('x')}</div><b style="font-size:16px">Couldn’t sync</b><p class="note" style="max-width:40ch">${esc(e.message || 'The connection dropped.')} Make sure both devices are on the same Wi-Fi and have Inkfold open.</p><button class="btn btn-quiet" data-back>Try again</button></div>`); },
     onDone: (summary, peer) => {
       haptic([10, 40, 10]);
       view(`<div class="sync-big"><div class="done-mark">${icon('check')}</div><b style="font-size:18px">Synced with ${esc(peer.name)}</b><p class="note">${esc(sync.describeSummary(summary))}</p>
@@ -1879,7 +1882,7 @@ function syncSheet() {
       refreshAfterDataChange();
     }
   };
-  const view = html => { body.innerHTML = html; const b = $('[data-back]', body); if (b) b.onclick = () => { cleanup && cleanup(); cleanup = null; home(); }; };
+  const view = html => { body.innerHTML = html; const b = $('[data-back]', body); if (b) b.onclick = () => { cleanup && cleanup(); cleanup = null; scanStop && scanStop(); home(); }; };
   const progress = msg => view(`<div class="sync-big" style="padding:30px 0"><div class="status-line" id="sync-status"><span class="spinner"></span><span>${esc(msg)}</span></div></div>`);
   const tabs = () => `<div class="seg" id="sync-mode"><button data-m="code" class="${mode === 'code' ? 'on' : ''}">${'Pairing code'}</button><button data-m="offline" class="${mode === 'offline' ? 'on' : ''}">Offline (QR)</button></div>`;
 
@@ -1888,7 +1891,7 @@ function syncSheet() {
       view(`${tabs()}<div class="split2">
         <button class="choice" data-a="show"><div class="ci">${icon('phone')}</div><b>Show a code</b><span>On this device. Then type the code on the other one.</span></button>
         <button class="choice" data-a="enter"><div class="ci">${icon('edit')}</div><b>Enter a code</b><span>The other device is already showing a code.</span></button></div>
-        <p class="note">Both devices need internet for a second to find each other. Your writing then travels directly over your Wi-Fi.</p>`);
+        <p class="note">Both devices need internet for a second to find each other and must be on the same Wi-Fi. Your writing then travels directly between them.</p>`);
     } else {
       view(`${tabs()}<div class="split2">
         <button class="choice" data-a="ostart"><div class="ci">${icon('qr')}</div><b>Start here</b><span>Show a QR code for the other device to scan.</span></button>
@@ -1935,10 +1938,12 @@ function syncSheet() {
     const qrcode = await loadLib(LIBS.qrcode).catch(() => null);
     let qr = '';
     if (qrcode) {
-      const q = qrcode(0, 'L'); q.addData(code); q.make();
-      const n = q.getModuleCount(); let d = '';
-      for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) if (q.isDark(r, c)) d += `M${c} ${r}h1v1h-1z`;
-      qr = `<svg viewBox="0 0 ${n} ${n}" shape-rendering="crispEdges" aria-label="Pairing QR code"><path d="${d}" fill="#0d1017"/></svg>`;
+      try {
+        const q = qrcode(0, 'L'); q.addData(code); q.make();
+        const n = q.getModuleCount(); let d = '';
+        for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) if (q.isDark(r, c)) d += `M${c} ${r}h1v1h-1z`;
+        qr = `<svg viewBox="-4 -4 ${n + 8} ${n + 8}" shape-rendering="crispEdges" aria-label="Pairing QR code"><rect x="-4" y="-4" width="${n + 8}" height="${n + 8}" fill="#fff"/><path d="${d}" fill="#0d1017"/></svg>`;
+      } catch { qr = ''; }
     }
     view(`<div class="sync-big">${qr ? `<div class="qr">${qr}</div>` : ''}<p class="note" style="max-width:40ch">${esc(line1)}</p>
       <button class="btn btn-quiet btn-sm" data-copy>${icon('copy')}Copy code instead</button>
@@ -1966,22 +1971,27 @@ function syncSheet() {
     $('[data-use]', body).onclick = () => { const v = $('#code-paste', body).value.trim(); if (v) go(v); };
     if (!camera) return;
     try {
-      const jsQR = await loadLib(LIBS.jsqr);
+      const detector = ('BarcodeDetector' in window) ? new window.BarcodeDetector({ formats: ['qr_code'] }) : null;
+      const jsQR = detector ? null : await loadLib(LIBS.jsqr);
       const video = $('video', body);
-      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false });
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false });
       video.srcObject = stream; await video.play();
       const cv = document.createElement('canvas'); const cx = cv.getContext('2d', { willReadFrequently: true });
       let alive = true;
       scanStop = () => { alive = false; stream.getTracks().forEach(t => t.stop()); scanStop = null; };
-      const tick = () => {
+      const tick = async () => {
         if (!alive) return;
         if (video.videoWidth) {
-          const w = 480, h = Math.round(video.videoHeight / video.videoWidth * w);
-          cv.width = w; cv.height = h; cx.drawImage(video, 0, 0, w, h);
-          const r = jsQR(cx.getImageData(0, 0, w, h).data, w, h, { inversionAttempts: 'dontInvert' });
-          if (r && /^IF1[OA]/.test(r.data)) { haptic(15); return go(r.data); }
+          if (detector) {
+            try { const hit = (await detector.detect(video)).find(c => /^IF1[OA]/.test(c.rawValue)); if (hit) { haptic(15); return go(hit.rawValue); } } catch {}
+          } else {
+            const w = Math.min(900, video.videoWidth), h = Math.round(video.videoHeight / video.videoWidth * w);
+            cv.width = w; cv.height = h; cx.drawImage(video, 0, 0, w, h);
+            const r = jsQR(cx.getImageData(0, 0, w, h).data, w, h, { inversionAttempts: 'dontInvert' });
+            if (r && /^IF1[OA]/.test(r.data)) { haptic(15); return go(r.data); }
+          }
         }
-        setTimeout(tick, 160);
+        setTimeout(tick, 140);
       };
       tick();
     } catch (err) {
