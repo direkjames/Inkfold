@@ -261,6 +261,8 @@ export function runSession(channel, { onStatus, onDone, onError, close, confirm 
 const STUN = [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:stun1.l.google.com:19302' }];
 const iceServers = () => (navigator.onLine ? STUN : []);
 const CONNECT_MS = 25000;
+// Some privacy browsers (Brave by default) switch off the browser feature devices use to find each other, so no route is ever found.
+const BLOCKED_MSG = 'Your browser is blocking direct device connections, so Inkfold found no way to reach the other device. In Brave, open brave://settings/privacy, set “WebRTC IP handling policy” to “Default public and private interfaces”, and lower Shields for this site. Or use Edge, Chrome or Firefox on this device.';
 const WIFI_HINT = 'Make sure both devices are on the same Wi-Fi network (not a guest network) and keep Inkfold open on both.';
 
 // Wraps a session so success/failure is reported once and the connection is always cleaned up.
@@ -317,7 +319,10 @@ function watchPeerLink(conn, onFail) {
     pc.addEventListener('iceconnectionstatechange', () => { if (pc.iceConnectionState === 'failed') onFail(); });
   };
   attach();
-  return () => `Tried ${seen.host} local, ${seen.srflx} public and ${seen.relay} relay routes.`;
+  const total = () => seen.host + seen.srflx + seen.relay;
+  const diag = () => `Tried ${seen.host} local, ${seen.srflx} public and ${seen.relay} relay routes.`;
+  diag.fail = () => new Error(total() === 0 ? BLOCKED_MSG : `Couldn’t connect to the other device. ${WIFI_HINT} ${diag()}`);
+  return diag;
 }
 
 export async function hostWithCode(code, handlers) {
@@ -334,8 +339,8 @@ export async function hostWithCode(code, handlers) {
     if (active) { conn.on('open', () => conn.close()); return; } // one device at a time
     active = true;
     handlers.onStatus('Connecting to your other device…');
-    const diag = watchPeerLink(conn, () => { h.onError(new Error(`Couldn’t connect to the other device. ${WIFI_HINT} ${diag()}`)); cleanup(); });
-    timer = setTimeout(() => { if (!stopSession) { h.onError(new Error(`Couldn’t connect to the other device. ${WIFI_HINT} ${diag()}`)); cleanup(); } }, CONNECT_MS);
+    const diag = watchPeerLink(conn, () => { h.onError(diag.fail()); cleanup(); });
+    timer = setTimeout(() => { if (!stopSession) { h.onError(diag.fail()); cleanup(); } }, CONNECT_MS);
     const ch = wrapPeerConn(conn);
     conn.on('error', e => h.onError(new Error(e.message || 'Connection failed')));
     conn.on('open', () => { clearTimeout(timer); stopSession = runSession(ch, { onStatus: h.onStatus, onDone: h.onDone, onError: h.onError, confirm: handlers.confirm, close: cleanup }); });
@@ -355,7 +360,7 @@ export async function joinWithCode(code, handlers) {
     clearTimeout(timer);
     handlers.onStatus('Looking for the other device…');
     const conn = peer.connect(peerId(code), { reliable: true, serialization: SERIALIZATION });
-    const fail = () => { h.onError(new Error(`Couldn’t connect to the other device. ${WIFI_HINT} ${diag()}`)); cleanup(); };
+    const fail = () => { h.onError(diag.fail()); cleanup(); };
     const diag = watchPeerLink(conn, fail);
     const ch = wrapPeerConn(conn);
     timer = setTimeout(() => { if (!stopSession) fail(); }, CONNECT_MS);
@@ -443,6 +448,7 @@ export async function offlineStart(handlers) {
   const stopSession = wireChannel(dc, h, pc);
   await pc.setLocalDescription(await pc.createOffer());
   await gathered(pc);
+  if (!/a=candidate:/.test(pc.localDescription.sdp)) { try { pc.close(); } catch {} throw new Error(BLOCKED_MSG); }
   const code = await packSdp('IF1O', pc.localDescription);
   const close = () => { watch.clear(); stopSession(); try { pc.close(); } catch {} };
   return {
@@ -465,6 +471,7 @@ export async function offlineJoin(offerCode, handlers) {
   await pc.setRemoteDescription(offer);
   await pc.setLocalDescription(await pc.createAnswer());
   await gathered(pc);
+  if (!/a=candidate:/.test(pc.localDescription.sdp)) { try { pc.close(); } catch {} throw new Error(BLOCKED_MSG); }
   watch.arm();
   return { code: await packSdp('IF1A', pc.localDescription), close() { watch.clear(); stopSession(); try { pc.close(); } catch {} } };
 }

@@ -102,6 +102,10 @@ A new **Map** view (next to Write, Board, Outline, Timeline and Bible) for novel
 - **Custom profile tabs.** Add tabs like "Royal Titles" to character profiles, with your own fields. A tab can be on every character (shared layout) or only on one.
 - **Family tree, reorganised.** Each generation sits on its own row; couples are joined by one line (a ring for married couples); children hang from the middle of their parents' line; siblings share one bar; married-in partners get a small stub. Circles are coloured by the new Gender field.
 
+## What's new in 1.5.6
+
+- When a privacy browser such as Brave blocks the feature devices use to find each other, Nearby Sync now says so right away (including on Offline QR) and tells you the setting to change, instead of a generic Wi-Fi error.
+
 ## What's new in 1.5.5
 
 - **Pairing-code sync handshake fixed.** The two devices could miss each other's first messages and one would wait forever. The hello is now repeated until the other side confirms it, library data that arrives early is kept, and a device that starts before it knows its own name no longer crashes the session.
