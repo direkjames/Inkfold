@@ -102,6 +102,12 @@ A new **Map** view (next to Write, Board, Outline, Timeline and Bible) for novel
 - **Custom profile tabs.** Add tabs like "Royal Titles" to character profiles, with your own fields. A tab can be on every character (shared layout) or only on one.
 - **Family tree, reorganised.** Each generation sits on its own row; couples are joined by one line (a ring for married couples); children hang from the middle of their parents' line; siblings share one bar; married-in partners get a small stub. Circles are coloured by the new Gender field.
 
+## What's new in 1.5.5
+
+- **Pairing-code sync handshake fixed.** The two devices could miss each other's first messages and one would wait forever. The hello is now repeated until the other side confirms it, library data that arrives early is kept, and a device that starts before it knows its own name no longer crashes the session.
+- A device that connects but never gets an answer now stops after 20 seconds with a clear message, and stalled transfers are detected correctly (retries no longer count as activity).
+- The approval prompt now appears inside the Nearby Sync screen on the device showing the code, with a vibration, instead of as a separate sheet.
+
 ## What's new in 1.5.4
 
 - **Pairing-code sync no longer hangs on "Connecting…".** Every step now has a time limit and a clear message: the pairing service (12 s), the direct link between the devices (25 s, with what was tried), and the approval on the device showing the code (2 min). A dead link is reported the moment it fails, with a one-tap "Use Offline (QR)" and a backup-file tip.

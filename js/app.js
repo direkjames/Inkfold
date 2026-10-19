@@ -22,7 +22,7 @@ import * as sync from './sync.js';
 import { loadLib, LIBS } from './libs.js';
 import { ICONS, icon, MARK, $, $$, esc, num, el, debounce, ago, haptic, toast, errorToast, closePop, popOpen, popover, menu, sheets, sheet, confirmSheet, pickFiles } from './ui.js';
 
-const VERSION = '1.5.4';
+const VERSION = '1.5.5';
 
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape') {
@@ -1863,15 +1863,21 @@ async function purgeOldTrash() {
 // ---------------------------------------------------------------- Nearby Sync
 async function syncSheet() {
   await saveNow(); // so the scene being typed right now goes along
-  let cleanup = null, scanStop = null, mode = 'code', wake = null;
+  let cleanup = null, scanStop = null, mode = 'code', wake = null, approving = false;
   navigator.wakeLock?.request('screen').then(w => { wake = w; }).catch(() => {});
   const s = sheet({ title: 'Nearby Sync', sub: 'Sync your library with another device. Your writing goes straight from one device to the other and is never stored online.', foot: null,
     onClose: () => { cleanup && cleanup(); scanStop && scanStop(); try { wake && wake.release(); } catch {} } });
   const body = s.body;
 
   const handlers = {
-    onStatus: msg => { const sl = $('#sync-status', body); if (sl) sl.innerHTML = `<span class="spinner"></span><span>${esc(msg)}</span>`; else progress(msg); },
-    confirm: peer => confirmSheet({ title: `Sync with ${esc(peer.name)}?`, sub: 'Only continue if you just entered this code on that device. Your libraries will be merged and a snapshot is saved first.', confirm: 'Sync' }),
+    onStatus: msg => { if (approving) return; const sl = $('#sync-status', body); if (sl) sl.innerHTML = `<span class="spinner"></span><span>${esc(msg)}</span>`; else progress(msg); },
+    confirm: peer => new Promise(res => {
+      haptic([20, 60, 20]); approving = true;
+      view(`<div class="sync-big"><div class="done-mark">${icon('phone')}</div><b style="font-size:18px">Sync with ${esc(peer.name)}?</b><p class="note" style="max-width:40ch">Only continue if you just entered this code on that device. Your libraries will be merged, and a snapshot is saved first.</p><div style="display:flex;gap:8px"><button class="btn btn-ghost" data-no>Decline</button><button class="btn btn-primary" data-yes autofocus>Sync</button></div></div>`);
+      $('[data-yes]', body).focus();
+      $('[data-yes]', body).onclick = () => { approving = false; progress(`Syncing with ${peer.name}…`); res(true); };
+      $('[data-no]', body).onclick = () => { approving = false; res(false); };
+    }),
     onError: e => { console.error(e); if (cleanup) { try { cleanup(); } catch {} cleanup = null; } haptic(30); view(`<div class="sync-big"><div class="done-mark" style="background:color-mix(in srgb,var(--danger) 12%,transparent);color:var(--danger)">${icon('x')}</div><b style="font-size:16px">Couldn’t sync</b><p class="note" style="max-width:40ch">${esc(e.message || 'The connection dropped.')} Make sure both devices are on the same Wi-Fi and have Inkfold open.</p><div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center"><button class="btn btn-quiet" data-back>Try again</button>${mode === 'code' ? '<button class="btn btn-ghost" data-offline>Use Offline (QR)</button>' : ''}</div><p class="note" style="max-width:40ch">Still stuck? Back up on one device (Library → Backup) and restore the file on the other.</p></div>`); const off = $('[data-offline]', body); if (off) off.onclick = () => { mode = 'offline'; home(); }; },
     onDone: (summary, peer) => {
       haptic([10, 40, 10]);

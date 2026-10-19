@@ -133,7 +133,7 @@ class Channel {
     if (fn && this.queue.length) this.queue.splice(0).forEach(m => fn(m));
   }
   get onmessage() { return this._onmessage; }
-  async send(obj, onProgress) {
+  async send(obj, onProgress, track = true) {
     const s = JSON.stringify(obj);
     const id = Math.random().toString(36).slice(2, 8);
     const n = Math.ceil(s.length / CHUNK) || 1;
@@ -144,7 +144,7 @@ class Channel {
       }
       if (this.closed) throw new Error('The connection dropped before sync finished.');
       this.sendRaw(JSON.stringify({ c: id, i, n, p: s.slice(i * CHUNK, (i + 1) * CHUNK) }));
-      this.onactivity && this.onactivity();
+      if (track) this.onactivity && this.onactivity();
       if (onProgress && n > 8 && i % 16 === 15) onProgress(Math.round(((i + 1) / n) * 100));
     }
   }
@@ -172,15 +172,18 @@ class Channel {
 // ---------------- Sync session (same on both devices) ----------------
 const STALL_MS = 45000;
 // Returns a stop() function. `confirm(peer)` (optional) lets this device approve the other one before any data moves.
+const HANDSHAKE_MS = 20000;
 export function runSession(channel, { onStatus, onDone, onError, close, confirm }) {
   let me = null, peer = null, remoteData = null, sentData = false, merging = false, merged = false, peerDone = false, summary = null;
-  let stopped = false, heard = false, lastActive = Date.now(), helloTimer = null, watchdog = null;
-  const stop = () => { stopped = true; channel.closed = true; clearInterval(helloTimer); clearInterval(watchdog); };
+  const ready = deviceInfo().then(d => { me = d; });
+  let stopped = false, acked = false, lastActive = Date.now(), helloTimer = null, watchdog = null, handshake = null;
+  const stop = () => { stopped = true; channel.closed = true; clearInterval(helloTimer); clearInterval(watchdog); clearTimeout(handshake); };
   const fail = e => { if (stopped) return; stop(); onError(e instanceof Error ? e : new Error(String(e))); setTimeout(() => close && close(), 400); };
   const finish = () => {
     if (stopped || !merged || !peerDone) return;
     stop(); onDone(summary, peer); setTimeout(() => close && close(), 800);
   };
+  // Only what the other device sends counts as life; our own retries must not keep a dead session looking busy.
   channel.onactivity = () => { lastActive = Date.now(); };
   channel.onclose = () => { if (merged && !stopped) { peerDone = true; finish(); } else fail(new Error('The connection dropped before sync finished.')); };
 
@@ -200,18 +203,24 @@ export function runSession(channel, { onStatus, onDone, onError, close, confirm 
     } catch (e) { fail(e); }
   };
 
+  const sendHello = () => { if (me) channel.send({ t: 'hello', deviceId: me.id, name: me.name, v: 1, got: !!peer }, null, false).catch(() => {}); };
+
   const onHello = async m => {
+    if (m.got) acked = true; // the other device has our hello, so we can stop repeating it
     if (peer) return;
     if (typeof m.deviceId !== 'string' || !m.deviceId) return;
     if (m.v !== 1) return fail(new Error('The other device runs a different version of Inkfold. Update both and try again.'));
+    clearTimeout(handshake);
     peer = { id: m.deviceId, name: String(m.name || 'Other device').slice(0, 40) };
+    sendHello(); // tells the other side its hello arrived
     if (confirm) {
       onStatus(`${peer.name} wants to sync with this device.`);
       // keeps the other device informed (and its stall timer quiet) while this one waits for a tap
-      const waiting = setInterval(() => channel.send({ t: 'wait', name: me.name }).catch(() => {}), 4000);
+      const waiting = setInterval(() => channel.send({ t: 'wait', name: me.name }, null, false).catch(() => {}), 4000);
+      channel.send({ t: 'wait', name: me.name }, null, false).catch(() => {});
       const ok = await Promise.race([confirm(peer), new Promise(r => setTimeout(() => r(false), 120000))]);
       clearInterval(waiting);
-      if (!ok) { try { await channel.send({ t: 'deny' }); } catch {} return fail(new Error('Sync was cancelled on this device.')); }
+      if (!ok) { try { await channel.send({ t: 'deny' }, null, false); } catch {} return fail(new Error('Sync was cancelled on this device.')); }
     }
     onStatus(`Connected to ${peer.name}. Saving a snapshot…`);
     await db.snapshot(`Before sync with ${peer.name}`);
@@ -224,11 +233,12 @@ export function runSession(channel, { onStatus, onDone, onError, close, confirm 
 
   channel.onprogress = pct => { if (!stopped) onStatus(`Receiving ${peer ? peer.name + '’s' : 'the'} library… ${pct}%`); };
   channel.onmessage = async m => {
-    if (stopped || !m || typeof m !== 'object') return;
-    heard = true;
+    if (!m || typeof m !== 'object') return;
     try {
+      await ready; // a message can arrive before this device knows its own name
+      if (stopped) return;
       if (m.t === 'hello') await onHello(m);
-      else if (m.t === 'data') { if (!peer) return; remoteData = m.data; onStatus(`Received ${peer.name}’s library…`); await tryMerge(); }
+      else if (m.t === 'data') { acked = true; remoteData = m.data; if (peer) onStatus(`Received ${peer.name}’s library…`); await tryMerge(); } // can land before the hello that names the sender
       else if (m.t === 'done') { peerDone = true; finish(); }
       else if (m.t === 'wait') onStatus(`Waiting for ${String(m.name || 'the other device').slice(0, 40)} to approve…`);
       else if (m.t === 'deny') fail(new Error('The other device declined the sync.'));
@@ -237,10 +247,10 @@ export function runSession(channel, { onStatus, onDone, onError, close, confirm 
 
   (async () => {
     try {
-      me = await deviceInfo();
-      // hello is repeated until the other side answers, so one that arrives before its listener is ready isn't lost
-      const hello = () => { if (!heard && !stopped) channel.send({ t: 'hello', deviceId: me.id, name: me.name, v: 1 }).catch(() => {}); };
-      hello(); helloTimer = setInterval(hello, 1500);
+      await ready;
+      // hello is repeated until the other side confirms it got ours, so one lost on the way can't leave a device waiting
+      sendHello(); helloTimer = setInterval(() => { if (!stopped && (!peer || !acked)) sendHello(); }, 1500);
+      handshake = setTimeout(() => { if (!peer) fail(new Error('Connected, but the other device didn’t answer. Open Nearby Sync on it, then try again.')); }, HANDSHAKE_MS);
       watchdog = setInterval(() => { if (!stopped && Date.now() - lastActive > STALL_MS) fail(new Error('The other device stopped responding.')); }, 5000);
     } catch (e) { fail(e); }
   })();
