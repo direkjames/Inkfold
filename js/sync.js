@@ -86,7 +86,21 @@ export function mergeLibraries(local, remote, peerName = 'other device') {
   return { writes: out, summary };
 }
 
-export async function applyMerge(remote, peerName) {
+// Everything a paired device sends is checked before it touches the library.
+const BAD_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+function cleanRecord(r) {
+  if (!r || typeof r !== 'object' || Array.isArray(r) || typeof r.id !== 'string' || !r.id || r.id.length > 200) return null;
+  if (Object.keys(r).some(k => BAD_KEYS.has(k))) return null;
+  return r;
+}
+export function validateDump(d) {
+  if (!d || typeof d !== 'object' || d.format !== 'inkfold-library' || !Array.isArray(d.projects) || !Array.isArray(d.items)) throw new Error('The other device sent data Inkfold doesn’t understand. Update Inkfold on both devices and try again.');
+  const list = a => (Array.isArray(a) ? a : []).map(cleanRecord).filter(Boolean);
+  return { format: d.format, version: d.version, projects: list(d.projects), items: list(d.items), tombstones: list(d.tombstones), log: list(d.log) };
+}
+
+export async function applyMerge(remoteRaw, peerName) {
+  const remote = validateDump(remoteRaw);
   const local = await db.dump();
   const { writes, summary } = mergeLibraries(local, remote, peerName);
   await db.writeBatch(writes);
@@ -103,103 +117,214 @@ export function describeSummary(s) {
 }
 
 // ---------------- Channel: chunked JSON over a data channel ----------------
-const CHUNK = 15000;
+// Chunks stay well under 16 KB even for non-Latin text, which is the smallest message size browsers agree on.
+const CHUNK = 4000;
+const HIGH_WATER = 512 * 1024;
+const MAX_CHUNKS = 200000;
 class Channel {
-  constructor(sendRaw, getBuffered) { this.sendRaw = sendRaw; this.getBuffered = getBuffered; this.parts = new Map(); this.onmessage = null; }
-  async send(obj) {
+  constructor(sendRaw, getBuffered) {
+    this.sendRaw = sendRaw; this.getBuffered = getBuffered;
+    this.parts = new Map(); this.counts = new Map();
+    this.queue = []; this._onmessage = null;
+    this.onprogress = null; this.onactivity = null; this.closed = false;
+  }
+  set onmessage(fn) {
+    this._onmessage = fn;
+    if (fn && this.queue.length) this.queue.splice(0).forEach(m => fn(m));
+  }
+  get onmessage() { return this._onmessage; }
+  async send(obj, onProgress) {
     const s = JSON.stringify(obj);
     const id = Math.random().toString(36).slice(2, 8);
     const n = Math.ceil(s.length / CHUNK) || 1;
     for (let i = 0; i < n; i++) {
-      while (this.getBuffered && this.getBuffered() > 1_000_000) await new Promise(r => setTimeout(r, 40));
+      while (this.getBuffered && this.getBuffered() > HIGH_WATER) {
+        if (this.closed) throw new Error('The connection dropped before sync finished.');
+        await new Promise(r => setTimeout(r, 20));
+      }
+      if (this.closed) throw new Error('The connection dropped before sync finished.');
       this.sendRaw(JSON.stringify({ c: id, i, n, p: s.slice(i * CHUNK, (i + 1) * CHUNK) }));
+      this.onactivity && this.onactivity();
+      if (onProgress && n > 8 && i % 16 === 15) onProgress(Math.round(((i + 1) / n) * 100));
     }
   }
   receive(raw) {
     let m; try { m = typeof raw === 'string' ? JSON.parse(raw) : raw; } catch { return; }
-    if (!m || !m.c) return;
-    const arr = this.parts.get(m.c) || [];
-    arr[m.i] = m.p; this.parts.set(m.c, arr);
-    if (arr.filter(x => x !== undefined).length === m.n) {
-      this.parts.delete(m.c);
-      try { this.onmessage && this.onmessage(JSON.parse(arr.join(''))); } catch (e) { console.error(e); }
+    if (!m || typeof m.c !== 'string' || m.c.length > 16 || !Number.isInteger(m.i) || !Number.isInteger(m.n) || m.n < 1 || m.n > MAX_CHUNKS || m.i < 0 || m.i >= m.n || typeof m.p !== 'string') return;
+    this.onactivity && this.onactivity();
+    let arr = this.parts.get(m.c);
+    if (!arr) {
+      if (this.parts.size >= 8) return;
+      arr = new Array(m.n); this.parts.set(m.c, arr); this.counts.set(m.c, 0);
+    }
+    if (arr.length !== m.n || arr[m.i] !== undefined) return;
+    arr[m.i] = m.p;
+    const c = this.counts.get(m.c) + 1; this.counts.set(m.c, c);
+    if (m.n > 8 && this.onprogress && c % 16 === 0) this.onprogress(Math.round((c / m.n) * 100));
+    if (c === m.n) {
+      this.parts.delete(m.c); this.counts.delete(m.c);
+      let msg; try { msg = JSON.parse(arr.join('')); } catch (e) { return console.error(e); }
+      if (this._onmessage) this._onmessage(msg); else this.queue.push(msg);
     }
   }
 }
 
 // ---------------- Sync session (same on both devices) ----------------
-export function runSession(channel, { onStatus, onDone, onError, close }) {
-  let me, peer = null, remoteData = null, sentData = false, merged = false, peerDone = false, summary = null;
-  const finish = () => { if (merged && peerDone) { onDone(summary, peer); setTimeout(() => close && close(), 600); } };
+const STALL_MS = 45000;
+// Returns a stop() function. `confirm(peer)` (optional) lets this device approve the other one before any data moves.
+export function runSession(channel, { onStatus, onDone, onError, close, confirm }) {
+  let me = null, peer = null, remoteData = null, sentData = false, merging = false, merged = false, peerDone = false, summary = null;
+  let stopped = false, heard = false, lastActive = Date.now(), helloTimer = null, watchdog = null;
+  const stop = () => { stopped = true; channel.closed = true; clearInterval(helloTimer); clearInterval(watchdog); };
+  const fail = e => { if (stopped) return; stop(); onError(e instanceof Error ? e : new Error(String(e))); setTimeout(() => close && close(), 400); };
+  const finish = () => {
+    if (stopped || !merged || !peerDone) return;
+    stop(); onDone(summary, peer); setTimeout(() => close && close(), 800);
+  };
+  channel.onactivity = () => { lastActive = Date.now(); };
+  channel.onclose = () => { if (merged && !stopped) { peerDone = true; finish(); } else fail(new Error('The connection dropped before sync finished.')); };
+
   const tryMerge = async () => {
-    if (!sentData || !remoteData || merged) return;
+    if (!sentData || !remoteData || merging || stopped) return;
+    merging = true;
     onStatus(`Merging changes from ${peer.name}…`);
     try {
       summary = await applyMerge(remoteData, peer.name);
+      remoteData = null;
       const last = await db.meta('lastSync', {});
       last[peer.id] = { at: Date.now(), name: peer.name };
       await db.setMeta('lastSync', last);
       merged = true;
       await channel.send({ t: 'done' });
       finish();
-    } catch (e) { onError(e); }
+    } catch (e) { fail(e); }
   };
-  channel.onmessage = async (m) => {
-    if (m.t === 'hello') {
-      peer = { id: m.deviceId, name: m.name || 'Other device' };
-      onStatus(`Connected to ${peer.name}. Saving a snapshot…`);
-      await db.snapshot(`Before sync with ${peer.name}`);
-      onStatus(`Sending your library to ${peer.name}…`);
-      await channel.send({ t: 'data', data: await db.dump() });
-      sentData = true;
-      tryMerge();
-    } else if (m.t === 'data') { remoteData = m.data; onStatus(`Received ${peer ? peer.name : 'library'}…`); tryMerge(); }
-    else if (m.t === 'done') { peerDone = true; finish(); }
+
+  const onHello = async m => {
+    if (peer) return;
+    if (typeof m.deviceId !== 'string' || !m.deviceId) return;
+    if (m.v !== 1) return fail(new Error('The other device runs a different version of Inkfold. Update both and try again.'));
+    peer = { id: m.deviceId, name: String(m.name || 'Other device').slice(0, 40) };
+    if (confirm) {
+      onStatus(`${peer.name} wants to sync with this device.`);
+      if (!(await confirm(peer))) { try { await channel.send({ t: 'deny' }); } catch {} return fail(new Error('Sync was cancelled on this device.')); }
+    }
+    onStatus(`Connected to ${peer.name}. Saving a snapshot…`);
+    await db.snapshot(`Before sync with ${peer.name}`);
+    onStatus(`Sending your library to ${peer.name}…`);
+    await channel.send({ t: 'data', data: await db.dump() }, pct => onStatus(`Sending your library to ${peer.name}… ${pct}%`));
+    sentData = true;
+    if (!remoteData) onStatus(`Waiting for ${peer.name}…`);
+    await tryMerge();
   };
-  return (async () => { me = await deviceInfo(); await channel.send({ t: 'hello', deviceId: me.id, name: me.name, v: 1 }); })();
+
+  channel.onprogress = pct => { if (!stopped) onStatus(`Receiving ${peer ? peer.name + '’s' : 'the'} library… ${pct}%`); };
+  channel.onmessage = async m => {
+    if (stopped || !m || typeof m !== 'object') return;
+    heard = true;
+    try {
+      if (m.t === 'hello') await onHello(m);
+      else if (m.t === 'data') { if (!peer) return; remoteData = m.data; onStatus(`Received ${peer.name}’s library…`); await tryMerge(); }
+      else if (m.t === 'done') { peerDone = true; finish(); }
+      else if (m.t === 'deny') fail(new Error('The other device declined the sync.'));
+    } catch (e) { fail(e); }
+  };
+
+  (async () => {
+    try {
+      me = await deviceInfo();
+      // hello is repeated until the other side answers, so one that arrives before its listener is ready isn't lost
+      const hello = () => { if (!heard && !stopped) channel.send({ t: 'hello', deviceId: me.id, name: me.name, v: 1 }).catch(() => {}); };
+      hello(); helloTimer = setInterval(hello, 1500);
+      watchdog = setInterval(() => { if (!stopped && Date.now() - lastActive > STALL_MS) fail(new Error('The other device stopped responding.')); }, 5000);
+    } catch (e) { fail(e); }
+  })();
+  return stop;
+}
+
+// ---------------- Shared WebRTC helpers ----------------
+const STUN = [{ urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:stun1.l.google.com:19302' }];
+const iceServers = () => (navigator.onLine ? STUN : []);
+const CONNECT_MS = 25000;
+const WIFI_HINT = 'Make sure both devices are on the same Wi-Fi network (not a guest network) and keep Inkfold open on both.';
+
+// Wraps a session so success/failure is reported once and the connection is always cleaned up.
+function guarded(handlers) {
+  let ended = false;
+  return {
+    ...handlers,
+    onDone: (s, p) => { ended = true; handlers.onDone(s, p); },
+    onError: e => { if (ended) return; ended = true; handlers.onError(e); },
+    get ended() { return ended; },
+  };
 }
 
 // ---------------- Transport A: pairing code (PeerJS matchmaker, files go device-to-device) ----------------
 const ALPHA = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 export const newCode = () => Array.from(crypto.getRandomValues(new Uint8Array(6)), b => ALPHA[b % ALPHA.length]).join('');
 const peerId = code => 'inkfold-v1-' + code.toLowerCase().replace(/[^a-z0-9]/g, '');
+const NET_MSG = 'Pairing codes need internet for a moment. Use Offline (QR) instead.';
+const peerErr = (e, joining) => new Error(
+  e.type === 'unavailable-id' ? 'That code is busy. Generate a new one.'
+  : e.type === 'peer-unavailable' ? 'No device is showing that code. Check it and try again.'
+  : ['network', 'server-error', 'socket-error', 'socket-closed'].includes(e.type) ? NET_MSG
+  : (e.message || 'Connection failed'));
 
 function wrapPeerConn(conn) {
   const ch = new Channel(s => conn.send(s), () => (conn.dataChannel ? conn.dataChannel.bufferedAmount : 0));
   conn.on('data', d => ch.receive(d));
+  conn.on('close', () => { ch.closed = true; ch.onclose && ch.onclose(); });
   return ch;
 }
 
 export async function hostWithCode(code, handlers) {
   await loadLib(LIBS.peerjs);
+  const h = guarded(handlers);
   const peer = new window.Peer(peerId(code), { debug: 0 });
-  const cleanup = () => { try { peer.destroy(); } catch {} };
-  peer.on('error', e => handlers.onError(new Error(e.type === 'unavailable-id' ? 'That code is busy. Generate a new one.' : e.type === 'network' || e.type === 'server-error' ? 'Pairing codes need internet for a moment. Use Offline pairing instead.' : (e.message || 'Connection failed'))));
+  let stopSession = null, active = false;
+  const cleanup = () => { try { stopSession && stopSession(); } catch {} try { peer.destroy(); } catch {} };
+  peer.on('error', e => h.onError(peerErr(e)));
+  peer.on('disconnected', () => { if (!peer.destroyed && !active) try { peer.reconnect(); } catch {} });
   peer.on('open', () => handlers.onStatus('Waiting for the other device…'));
   peer.on('connection', conn => {
-    conn.on('open', () => runSession(wrapPeerConn(conn), { ...handlers, close: cleanup }));
-    conn.on('error', e => handlers.onError(e));
+    if (active) { conn.on('open', () => conn.close()); return; } // one device at a time
+    active = true;
+    handlers.onStatus('Connecting to your other device…');
+    const ch = wrapPeerConn(conn);
+    conn.on('error', e => h.onError(e));
+    conn.on('open', () => { stopSession = runSession(ch, { ...h, confirm: handlers.confirm, close: cleanup }); });
   });
   return cleanup;
 }
 
 export async function joinWithCode(code, handlers) {
   await loadLib(LIBS.peerjs);
+  const h = guarded(handlers);
   const peer = new window.Peer({ debug: 0 });
-  const cleanup = () => { try { peer.destroy(); } catch {} };
-  peer.on('error', e => handlers.onError(new Error(e.type === 'peer-unavailable' ? 'No device is showing that code. Check it and try again.' : e.type === 'network' || e.type === 'server-error' ? 'Pairing codes need internet for a moment. Use Offline pairing instead.' : (e.message || 'Connection failed'))));
+  let stopSession = null, timer = null;
+  const cleanup = () => { clearTimeout(timer); try { stopSession && stopSession(); } catch {} try { peer.destroy(); } catch {} };
+  peer.on('error', e => h.onError(peerErr(e, true)));
   peer.on('open', () => {
     handlers.onStatus('Connecting…');
     const conn = peer.connect(peerId(code), { reliable: true, serialization: 'json' });
-    conn.on('open', () => runSession(wrapPeerConn(conn), { ...handlers, close: cleanup }));
-    conn.on('error', e => handlers.onError(e));
+    const ch = wrapPeerConn(conn);
+    timer = setTimeout(() => { if (!stopSession) { h.onError(new Error(`Couldn’t reach the other device. ${WIFI_HINT}`)); cleanup(); } }, CONNECT_MS);
+    conn.on('error', e => h.onError(e));
+    conn.on('open', () => { clearTimeout(timer); stopSession = runSession(ch, { ...h, close: cleanup }); });
   });
   return cleanup;
 }
 
 // ---------------- Transport B: offline pairing (QR / copy-paste, no internet) ----------------
+function compactSdp(sdp) {
+  return sdp.split(/\r?\n/).filter(l => {
+    if (!l || /^a=(extmap|rtcp-fb|ssrc|msid|ice-options)/.test(l)) return false;
+    if (/^a=candidate:/.test(l) && (/\stcp\s/i.test(l) || /\sfe80:/i.test(l))) return false; // UDP only, no link-local IPv6
+    return true;
+  }).join('\n');
+}
 async function packSdp(prefix, desc) {
-  const json = JSON.stringify({ t: desc.type, s: desc.sdp.split(/\r?\n/).filter(l => l && !/^a=(extmap|rtcp-fb|ssrc|msid)/.test(l)).join('\n') });
+  const json = JSON.stringify({ t: desc.type, s: compactSdp(desc.sdp) });
   let bytes = new TextEncoder().encode(json);
   let tag = 'r';
   if (window.CompressionStream) {
@@ -212,15 +337,18 @@ async function packSdp(prefix, desc) {
 async function unpackSdp(code, prefix) {
   code = (code || '').trim().replace(/\s+/g, '');
   if (!code.startsWith(prefix)) throw new Error(prefix === 'IF1O' ? 'That isn’t a pairing code from “Start”.' : 'That isn’t a reply code from the other device.');
-  const [head, body] = code.split('.');
-  const bin = atob(body.replace(/-/g, '+').replace(/_/g, '/'));
-  let bytes = Uint8Array.from(bin, c => c.charCodeAt(0));
-  if (head.endsWith('z')) {
-    const ds = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
-    bytes = new Uint8Array(await new Response(ds).arrayBuffer());
-  }
-  const o = JSON.parse(new TextDecoder().decode(bytes));
-  return { type: o.t, sdp: o.s.split('\n').filter(Boolean).join('\r\n') + '\r\n' };
+  try {
+    const [head, body] = code.split('.');
+    const bin = atob(body.replace(/-/g, '+').replace(/_/g, '/'));
+    let bytes = Uint8Array.from(bin, c => c.charCodeAt(0));
+    if (head.endsWith('z')) {
+      const ds = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
+      bytes = new Uint8Array(await new Response(ds).arrayBuffer());
+    }
+    const o = JSON.parse(new TextDecoder().decode(bytes));
+    if (!['offer', 'answer'].includes(o.t) || typeof o.s !== 'string') throw new Error('bad');
+    return { type: o.t, sdp: o.s.split('\n').filter(Boolean).join('\r\n') + '\r\n' };
+  } catch { throw new Error('That code looks damaged or incomplete. Scan it again or copy it in full.'); }
 }
 function gathered(pc) {
   return new Promise(res => {
@@ -229,33 +357,59 @@ function gathered(pc) {
     pc.addEventListener('icegatheringstatechange', () => { if (pc.iceGatheringState === 'complete') { clearTimeout(t); res(); } });
   });
 }
-function wireChannel(dc, handlers, pc) {
-  dc.bufferedAmountLowThreshold = 256000;
+// Reports a dead connection instead of spinning forever.
+function watchConnection(pc, h) {
+  let timer = null, lost = null;
+  const arm = () => { clearTimeout(timer); timer = setTimeout(() => { if (pc.connectionState !== 'connected') { h.onError(new Error(`Couldn’t connect to the other device. ${WIFI_HINT}`)); try { pc.close(); } catch {} } }, CONNECT_MS); };
+  pc.addEventListener('connectionstatechange', () => {
+    const st = pc.connectionState;
+    if (st === 'connected') { clearTimeout(timer); clearTimeout(lost); }
+    else if (st === 'failed') { clearTimeout(timer); h.onError(new Error(`Couldn’t connect to the other device. ${WIFI_HINT}`)); try { pc.close(); } catch {} }
+    else if (st === 'disconnected') { lost = setTimeout(() => { if (pc.connectionState === 'disconnected') pc.close(); }, 8000); }
+  });
+  return { arm, clear: () => { clearTimeout(timer); clearTimeout(lost); } };
+}
+function wireChannel(dc, h, pc) {
   const ch = new Channel(s => dc.send(s), () => dc.bufferedAmount);
+  let stopSession = null;
   dc.onmessage = e => ch.receive(e.data);
-  dc.onopen = () => runSession(ch, { ...handlers, close: () => { try { pc.close(); } catch {} } });
+  dc.onclose = () => { ch.closed = true; ch.onclose && ch.onclose(); };
+  dc.onerror = () => {};
+  const start = () => { if (!stopSession) stopSession = runSession(ch, { ...h, close: () => { try { pc.close(); } catch {} } }); };
+  if (dc.readyState === 'open') start(); else dc.onopen = start;
+  return () => { try { stopSession && stopSession(); } catch {} };
 }
 
 export async function offlineStart(handlers) {
-  const pc = new RTCPeerConnection({ iceServers: [] });
+  const h = guarded(handlers);
+  const pc = new RTCPeerConnection({ iceServers: iceServers() });
+  const watch = watchConnection(pc, h);
   const dc = pc.createDataChannel('inkfold', { ordered: true });
-  wireChannel(dc, handlers, pc);
+  const stopSession = wireChannel(dc, h, pc);
   await pc.setLocalDescription(await pc.createOffer());
   await gathered(pc);
   const code = await packSdp('IF1O', pc.localDescription);
+  const close = () => { watch.clear(); stopSession(); try { pc.close(); } catch {} };
   return {
     code,
-    async acceptReply(reply) { await pc.setRemoteDescription(await unpackSdp(reply, 'IF1A')); handlers.onStatus('Connecting over Wi-Fi…'); },
-    close() { try { pc.close(); } catch {} }
+    async acceptReply(reply) {
+      await pc.setRemoteDescription(await unpackSdp(reply, 'IF1A'));
+      handlers.onStatus('Connecting over Wi-Fi…'); watch.arm();
+    },
+    close
   };
 }
 
 export async function offlineJoin(offerCode, handlers) {
+  const h = guarded(handlers);
   const offer = await unpackSdp(offerCode, 'IF1O');
-  const pc = new RTCPeerConnection({ iceServers: [] });
-  pc.ondatachannel = e => wireChannel(e.channel, handlers, pc);
+  const pc = new RTCPeerConnection({ iceServers: iceServers() });
+  const watch = watchConnection(pc, h);
+  let stopSession = () => {};
+  pc.ondatachannel = e => { stopSession = wireChannel(e.channel, h, pc); };
   await pc.setRemoteDescription(offer);
   await pc.setLocalDescription(await pc.createAnswer());
   await gathered(pc);
-  return { code: await packSdp('IF1A', pc.localDescription), close() { try { pc.close(); } catch {} } };
+  watch.arm();
+  return { code: await packSdp('IF1A', pc.localDescription), close() { watch.clear(); stopSession(); try { pc.close(); } catch {} } };
 }

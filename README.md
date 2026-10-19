@@ -102,6 +102,13 @@ A new **Map** view (next to Write, Board, Outline, Timeline and Bible) for novel
 - **Custom profile tabs.** Add tabs like "Royal Titles" to character profiles, with your own fields. A tab can be on every character (shared layout) or only on one.
 - **Family tree, reorganised.** Each generation sits on its own row; couples are joined by one line (a ring for married couples); children hang from the middle of their parents' line; siblings share one bar; married-in partners get a small stub. Circles are coloured by the new Gender field.
 
+## What's new in 1.5.3
+
+- **Nearby Sync fixed** on phone and computer. Sync now reports a clear error (and the Wi-Fi hint) when the devices can't reach each other instead of spinning forever, retries its first handshake, shows send and receive progress, stops stalled transfers, keeps the screen awake while syncing, and saves the scene you're typing first.
+- Pairing-code sync asks you to approve the other device before any writing moves, and everything received is validated before it's merged.
+- Offline (QR) codes are smaller and white-framed so they scan more reliably, using the phone's built-in QR detector when it has one.
+- **Character, place and lore photos can be changed again** (the upload button now opens the picker), and the same fix applies to project cover uploads.
+
 ## Files
 
 | File | What it does |
