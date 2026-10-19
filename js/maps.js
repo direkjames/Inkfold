@@ -14,9 +14,10 @@ import { entries, namesOf, nameRegex, avatar, createEntry } from './bible.js';
 import { compressImage } from './images.js';
 import { whenKey } from './timeline.js';
 import { saveFile, safeName } from './io.js';
+import { initMapfold, openImportSheet, linkBadge, checkUpdate } from './mapfold.js';
 
 let ctx; // { state, saveItem, openScene, openEntry, onChange }
-export function initMaps(c) { ctx = c; }
+export function initMaps(c) { ctx = c; initMapfold({ state: c.state, saveItem: c.saveItem, open: id => openMap(id), refresh: () => V.root && renderMaps(V.root) }); }
 
 const NS = 'http://www.w3.org/2000/svg';
 const MAP_MAX = 4000;
@@ -354,9 +355,11 @@ export function renderMaps(root, opts = {}) {
       <h3>Add your world map</h3>
       <p>Upload a picture of your map, then pin your places on it, label seas and mountains, draw borders and roads, and see where every scene happens and how your characters travel.</p>
       <button class="btn btn-primary" data-newmap>${icon('upload')}Upload a map</button>
+      <button class="btn btn-ghost" data-mapfold>${icon('pin')}Import from Mapfold</button>
       <span class="note">JPG, PNG or WebP. Big maps are kept sharp up to ${num(MAP_MAX)} pixels.</span>
     </div></div>`;
     $('[data-newmap]', root).onclick = newMap;
+    $('[data-mapfold]', root).onclick = openImportSheet;
     return;
   }
   const m = curMap();
@@ -414,6 +417,7 @@ function renderSide() {
   side.innerHTML = `<div class="mv-sec"><span class="group-title">Maps</span></div>
     <div class="mv-list">${ordered.map(mm => `<button class="mv-map ${mm.id === m.id ? 'on' : ''}" data-map="${mm.id}" style="padding-left:${8 + depth(mm.id) * 16}px"><span class="mv-thumb" style="background-image:url('${mm.data.src}')"></span><span class="mv-mtitle">${esc(mm.title || 'Untitled map')}</span></button>`).join('')}</div>
     <button class="btn btn-quiet btn-sm mv-new" data-newmap>${icon('plus')}New map</button>
+    <button class="btn btn-quiet btn-sm mv-new" data-mapfold>${icon('pin')}Import from Mapfold</button>
     <div class="mv-sec"><span class="group-title">Layers</span><button class="icon-btn" data-addlayer aria-label="Add a layer" title="Add a layer">${icon('plus')}</button></div>
     <div class="mv-layers">${L.map((l, i) => `<div class="mv-layer ${V.layer[m.id] === l.id ? 'on' : ''} ${l.hidden ? 'off' : ''}" data-layer="${l.id}">
       <button class="icon-btn" data-lvis="${l.id}" aria-label="${l.hidden ? 'Show' : 'Hide'} layer" title="${l.hidden ? 'Show' : 'Hide'}">${l.hidden ? EYE_OFF : EYE}</button>
@@ -423,6 +427,7 @@ function renderSide() {
     <p class="note mv-layer-note">New pins, labels, regions and routes go on the highlighted layer.</p>`;
   $$('[data-map]', side).forEach(b => b.onclick = () => { V.sideOpen = false; openMap(b.dataset.map); });
   $('[data-newmap]', side).onclick = newMap;
+  $('[data-mapfold]', side).onclick = openImportSheet;
   $('[data-addlayer]', side).onclick = () => change([m], () => { const l = { id: uid('ly-'), name: `Layer ${L.length + 1}` }; m.data.layers = [...L, l]; V.layer[m.id] = l.id; }).then(() => { renderSide(); renameLayer(V.layer[m.id]); });
   $$('[data-lvis]', side).forEach(b => b.onclick = () => change([m], () => { const l = L.find(x => x.id === b.dataset.lvis); l.hidden = !l.hidden; }).then(() => { if (V.sel && byId(V.sel) && !visible(m, byId(V.sel))) V.sel = null; redraw(); renderSide(); renderDetail(); }));
   $$('[data-llock]', side).forEach(b => b.onclick = () => change([m], () => { const l = L.find(x => x.id === b.dataset.llock); l.locked = !l.locked; }).then(() => { redraw(); renderSide(); }));
@@ -836,12 +841,14 @@ function renderMapPanel(box, m) {
     <div class="mvd-sec"><span class="field-label">Travel speeds (km a day)</span>
       <div class="mv-speeds">${[['walk', 'On foot'], ['horse', 'Horseback'], ['ship', 'Ship']].map(([k, l]) => `<label><span>${l}</span><input class="input tnum" type="number" min="1" step="1" value="${s[k]}" data-speed="${k}"></label>`).join('')}</div></div>
     <div class="mvd-sec"><span class="field-label">On this map</span><p class="mv-counts tnum">${['pin', 'label', 'region', 'route'].map(k => { const n = marksOf(m.id).filter(x => x.data.kind === k).length; return `${n} ${k}${n === 1 ? '' : 's'}`; }).join(' · ')}</p></div>
+    ${linkBadge(m)}
     <div class="mvd-row"><button class="btn btn-ghost btn-sm" data-replace>${icon('image')}Replace picture</button></div>
     <p class="note" style="text-align:left">Tip: pick a tool below the map. Scroll or pinch to zoom, drag to move around. Ctrl/Cmd + Z undoes.</p>
   </div>`;
   const n = $('#mvName', box); n.oninput = () => { edit(m, () => { m.title = n.value.trim() || 'Untitled map'; }, false); renderCrumbs(); const b = $(`[data-map="${m.id}"] .mv-mtitle`, V.root); if (b) b.textContent = m.title; };
   $('[data-setscale]', box).onclick = () => { setTool('ruler'); V.scaleMode = true; renderDetail(); };
   $('[data-replace]', box).onclick = replacePicture;
+  const mfc = $('[data-mfcheck]', box); if (mfc) mfc.onclick = () => checkUpdate(m);
   const c2 = $('[data-crumb2]', box); if (c2) c2.onclick = () => openMap(c2.dataset.crumb2);
   $$('[data-speed]', box).forEach(inp => inp.onchange = () => { const v = Math.max(1, +inp.value || DEFAULT_SPEEDS[inp.dataset.speed]); change([m], () => { m.data = { ...m.data, speeds: { ...speeds(m), [inp.dataset.speed]: v } }; }); });
 }
