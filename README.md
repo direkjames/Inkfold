@@ -1,165 +1,105 @@
+<div align="center">
+
 # Inkfold
 
-A private, offline writing studio that runs in the browser. Phases 1 to 4.
+**A private, offline writing studio that runs in your browser.**
 
-## Put it on GitHub Pages
+![Status: Shipped](https://img.shields.io/badge/status-shipped-brightgreen)
+![Version 1.6](https://img.shields.io/badge/version-1.6-2a7865)
+![Platform: Web and installable](https://img.shields.io/badge/platform-web%20%2B%20installable-blue)
+![Works offline](https://img.shields.io/badge/works-offline-86cdb9)
 
-1. Create a new repository on GitHub, for example `inkfold`.
-2. Upload everything in this folder (keep the `js` and `icons` folders as they are).
-3. In the repository, go to **Settings → Pages**, set **Source** to "Deploy from a branch", pick `main` and `/ (root)`, and save.
-4. After a minute your app is live at `https://<your-username>.github.io/inkfold/`.
+<img src="docs/screenshots/hero-1920x1080.png" alt="Inkfold's writing view, half in the light Paper theme and half in the dark Ink theme" width="880">
 
-Open it once while online. After that it works fully offline.
+<img src="docs/screenshots/hero-1680x1050.png" alt="Inkfold's corkboard, relationship map and story bible" width="880">
 
-## What's in Phase 1
+## About
 
-- Library of projects with covers, and a sample project to try things on
-- Binder: chapters and scenes, drag to reorder, rename, duplicate, trash with undo
-- Editor: rich text with Markdown shortcuts (`# `, `> `, `- `, `**bold**`, `*italic*`, `***` + Enter for a scene break), or a plain Markdown mode per project
-- Focus mode (Ctrl + .), typewriter scrolling, typography settings (5 typefaces, size, spacing, width), smart punctuation
-- Live word counts, constant autosave
-- Import: .docx, .md, .txt, .inkfold project files, .zip backups
-- Export: Word (.docx), PDF, Markdown, .inkfold project file
-- Safety: persistent storage request, install prompt, "last backup" indicator and reminders, one-click ZIP backup and restore (merge or replace), daily automatic backup to a folder (Chrome and Edge on desktop), snapshots before every sync, import and restore, 30-day Trash
-- Nearby Sync:
-  - **Pairing code**: one device shows a 6-character code, the other types it. Needs internet for a second to pair; the writing then goes directly between the devices.
-  - **Offline (QR)**: no internet needed. Device A shows a QR code, device B scans it and shows a reply, device A scans the reply. Copy-and-paste works when there's no camera.
-  - Only changed scenes are taken. If the same scene was edited on both devices, both versions are kept and the copy is marked "conflicted copy" in the binder.
+Inkfold is a place to write a book, a screenplay, a poem or a journal, and to keep track of everything around it: characters, places, timelines and maps.
 
-## What's new in Phase 2
+Everything is saved on your device and works offline. Your writing never leaves it unless you sync or export it. There is no account.
 
-- Paper (light) theme by default, with a light/dark toggle in the sidebar and library header
-- Corkboard: index cards per chapter, drag cards between chapters, edit synopsis, status, POV, label and word target
-- Outliner: a table of every scene with inline editing
-- Scene status (Idea, Draft, Revised, Final), colour labels and per-scene word targets, shown in the binder and editor
-- Cover art: upload your own image for any project
-- Daily word goal, streaks and a 26-week heatmap
-- Deadline planner: set a project target and date to see the words per day you need
-- Writing analytics: words per hour and the hours you write best
-- Writing sprints with an optional Pomodoro break
-- Focus dimming by paragraph or sentence
-- Ambient soundscapes (rain, fireplace, café, ocean), generated on the device so they play offline
-- Celebrations when you hit a goal, with haptics on Android
+*The project in these pictures, The Lighthouse Keeper, is the sample that comes with Inkfold.*
 
-Writing stats are included in backups and Nearby Sync, so they add up across your devices.
+**[Try it: direkjames.github.io/Inkfold](https://direkjames.github.io/Inkfold/)**
 
-## What's new in Phase 3
+</div>
 
-- Story bible (Bible tab): characters, places and lore with photos, roles, traits, wants and needs, arcs and notes
-- `[[Links]]` between entries, with suggestions as you type, plus "Appears in" (every scene that mentions a name) and "Linked from"
-- Hover a character or place name in your manuscript to see their card
-- Relationship map with two views: a draggable web of everyone, and a family tree built from Parent, Married and Sibling relationships
-- Ten relationship types (family, love, friendship, alliance, mentorship, work, rivalry, enmity), each with its own colour
-- Margin notes pinned to the words you select, with resolve and reopen
-- Revision rounds: new writing is coloured by draft round, with "accept all"
-- Version history for every scene: automatic versions before each editing session, named versions, and a side-by-side comparison with restore
-- Find & replace across the whole project (match case, whole words, regular expressions)
-- Revise panel: readability score, adverbs, passive voice, repeated words, long sentences, dialogue-only view, most used words, and a name check against your story bible
-- Read aloud with sentence highlighting, speed and voice
-- Reference pane: keep another scene or a character profile open beside the one you're writing
-- Shortcuts: Ctrl/Cmd + F opens Find & replace
+## Features
 
-## What's new in Phase 4
+**Four kinds of project**
+- **Novel:** chapters and scenes
+- **Screenplay:** scene headings, action, character and dialogue, with autocomplete, page count and `.fountain` import
+- **Poetry:** new lines and stanzas, with syllable counts beside each line
+- **Journal:** one entry a day, a mood for each day and a calendar view
+- **Series:** group books so they share one story bible
 
-- Four kinds of project, picked when you create one (and changeable in Project details):
-  - **Novel**: chapters and scenes
-  - **Screenplay**: scene headings, action, character, parentheticals, dialogue, transitions. Tab switches element, Enter picks the element that usually follows, and character names, locations and times autocomplete. Page count in the status bar. Import `.fountain` files.
-  - **Poetry**: Enter for a new line, Enter twice for a new stanza, syllable counts beside each line, optional centred layout
-  - **Journal**: one entry a day filed by month, a mood for each day, and a calendar view
-- Timeline (novels and screenplays): give scenes a date, a day number or a time, see them in story order with one lane per point of view, spot flashbacks, or switch to reading order
-- Compile: Word, PDF, EPUB, Markdown, and for screenplays Fountain, Final Draft (.fdx) and an industry-format PDF. Looks: Standard manuscript (header, word count, contact details), Book, Reading copy, or Custom (typeface, size, spacing, chapter headings, scene breaks). Choose exactly which chapters and scenes go in.
-- App lock: a PIN when Inkfold opens, auto-lock after a set time, Ctrl/Cmd + Shift + L to lock now
-- Encrypted projects: AES-256 encryption with a password only you know. Backups and sync carry the encrypted data; the password never leaves your head.
-- Command palette (Ctrl/Cmd + K) to jump to any scene, character, view or action, and a shortcuts sheet (Ctrl/Cmd + /)
-- Editor themes: Paper, Ink, Midnight, Sepia Night, OLED Black, or match your device
-- Better tablet layouts
+**Writing**
+- A clean editor with Markdown shortcuts, or a plain Markdown mode
+- **Focus mode**, typewriter scrolling and dimming by paragraph or sentence
+- Five typefaces and five editor themes (Paper, Ink, Midnight, Sepia Night and OLED Black), or match your device, plus size, spacing and width you can tune
+- Pictures in scenes, with captions and resizing
+- Live word counts and constant autosave
+- **Read aloud** with sentence highlighting
 
-## What's new in 1.5: Maps
+**Planning**
+- **Corkboard:** index cards per chapter with synopsis, status, point of view, label and word target. Drag cards between chapters.
+- **Outliner:** a table of every scene you can edit in place
+- **Timeline:** put scenes in story order with one lane per point of view
+- **Story bible:** characters, places and lore with photos, traits, wants and needs, arcs and custom tabs
+- **`[[Links]]`** between entries, hover cards in your manuscript, and "Appears in" for every scene that mentions a name
+- **Relationship map:** a draggable web and a family tree, with ten kinds of relationship
+- **Maps:** your own map pictures with pins, labels, regions and routes, maps inside maps, scene locations, travel times and character journeys
+- **Import from Mapfold:** bring maps and places from the sister app and keep them in sync
 
-A new **Map** view (next to Write, Board, Outline, Timeline and Bible) for novels, screenplays and journals. Shortcut: Ctrl/Cmd + Shift + the view's number.
+**Revising**
+- Margin notes, revision rounds colored by draft, and version history for every scene with side-by-side comparison
+- **Find and replace** across the whole project, including regular expressions
+- A revise panel with readability, adverbs, passive voice, repeated words and long sentences
+- A reference pane to keep another scene or a character open beside the one you write
 
-- **Your own map pictures**, kept sharp up to 4000 pixels. Several maps per book, shared across a series like the story bible.
-- **Pins** with 14 icons and 10 colours, each linked to a Place in your story bible (or creating one). Click a pin for the place card and the scenes set there.
-- **Maps inside maps**: a pin can open another map (double-click or double-tap it). A breadcrumb leads back.
-- **Labels** (plain, italic serif, or spaced capitals; three sizes; any angle), **regions** (borders and territories with fill and border styles) and **routes** (solid, dashed or dotted, with smooth curves). Drag the dots to reshape; click a small dot to add a point.
-- **Layers** you can show, hide, lock and reorder.
-- **Ruler and scale** in metres and kilometres: set the scale once, then measure distances, see route lengths and travel times on foot, on horseback and by ship (speeds are editable).
-- **Undo and redo** (Ctrl/Cmd + Z, Shift + Z) for everything on the map.
-- **Scene locations**: "Set place" next to "Set time" at the top of each scene, with places mentioned in the scene suggested first. Places show on Board cards, in the Outline and in Scene details. Pins show how many scenes happen there, including scenes on maps inside it.
-- **Character journeys**: pick up to five characters to see their numbered route through the story, in story order (Timeline dates when you have them). A character counts as in a scene when it's from their point of view or they're mentioned by name; the people button at the top of a scene lets you correct it. An "Up to chapter" slider replays the story, and travel checks warn when someone covers too much ground too fast.
-- **Export** a map as a full-size PNG with the visible layers (and journeys, if shown).
-- Place entries in the Bible list "Scenes set here" and "On maps".
+**Goals and habits**
+- Daily word goal, streaks, a heatmap, a deadline planner and writing sprints
+- EXP and levels for every word you write
+- Ambient sounds (rain, fireplace, café and ocean) made on your device
 
-## What's new in 1.4
+**Export and backup**
+- **Compile** to Word, PDF, EPUB and Markdown, and for screenplays Fountain, Final Draft and an industry-format PDF
+- Import `.docx`, `.md`, `.txt`, `.inkfold` and `.zip` files
+- One-click ZIP backup and restore, a daily automatic backup to a folder (Chrome and Edge on desktop), and a 30-day trash
 
-- **Blank lines stay put.** Empty lines and line breaks you add in a scene are kept when you save, switch scenes, use Markdown mode, and export to Word, PDF, EPUB or Markdown. Importing .txt, .md and .docx keeps them too.
-- **New chapters show up right away** in the binder, ready to rename (same for new and duplicated scenes).
-- **First names count.** "Luna Valentino" is also found as plain "Luna" in your scenes, hover cards and "Appears in", without adding an alias. If two entries share a first name, it isn't matched on its own and the profile says so. Each character has a switch to turn this off.
-- **Pictures in scenes.** Insert from the toolbar, drag and drop, or paste. Click a picture to resize it (Small, Medium, Large, Full width), add a caption, replace or remove it. Pictures are shrunk automatically and go into Word, PDF, EPUB and Markdown exports.
-- **Series.** Group books into a series ("New series" in the library, or Project details → Series). Books in a series share one story bible: characters, places, lore, relationships and profile tabs. Entries with the same name are merged when a book joins. A book that leaves keeps its own copy. Encrypted projects can't join a series.
-- **Welcome back.** The library shows where you left off, with the last lines you wrote, your words today, your streak and your level.
-- **EXP and levels.** 1 EXP per word written, +25 for each writing day (100+ words), and a growing bonus for days in a row. Level-ups are celebrated. Deleting text never takes EXP away.
-- **Custom profile tabs.** Add tabs like "Royal Titles" to character profiles, with your own fields. A tab can be on every character (shared layout) or only on one.
-- **Family tree, reorganised.** Each generation sits on its own row; couples are joined by one line (a ring for married couples); children hang from the middle of their parents' line; siblings share one bar; married-in partners get a small stub. Circles are coloured by the new Gender field.
+**Privacy**
+- **App lock** with a PIN, and **encrypted projects** with AES-256 and a password only you know
+- **Nearby Sync** between your own devices with a pairing code or offline QR codes, with no account or server in the middle
+- Installable, and works offline after your first visit
 
-## What's new in 1.6.0
+Press `Ctrl/Cmd + K` for the command palette and `Ctrl/Cmd + /` for every shortcut.
 
-- **Import from Mapfold.** Maps you share from Mapfold (the sister worldbuilding app on the same domain and browser) can be imported into Inkfold's Map view: the picture, scale, pins, labels, regions, routes and pins that open nested maps. Places from Mapfold's wiki are added to your story bible, with their notes. Open **Maps → Import from Mapfold**.
-- **Stay in sync.** A linked map shows "Linked from Mapfold" with **Check for update**. Updating refreshes what came from Mapfold, removes things deleted there, and leaves anything you drew in Inkfold alone. You also get a notice when Mapfold shares a newer version.
-- Secrets never cross over: Mapfold leaves them out of what it shares.
+## Getting started
 
-## What's new in 1.5.6
+1. Open [direkjames.github.io/Inkfold](https://direkjames.github.io/Inkfold/) in your browser.
+2. Press **New project**, or open the sample and look around.
+3. Write in **Write**, plan in **Board**, **Outline** and **Timeline**, and keep your cast in **Bible**.
+4. Press the install button in your browser to use it like an app, and make a backup now and then.
 
-- When a privacy browser such as Brave blocks the feature devices use to find each other, Nearby Sync now says so right away (including on Offline QR) and tells you the setting to change, instead of a generic Wi-Fi error.
+## Requirements
 
-## What's new in 1.5.5
+- A modern web browser (Chrome, Edge, Firefox or Safari). Some features, such as the automatic backup folder, need Chrome or Edge on a computer.
+- An internet connection the first time, so the app and its fonts can load
 
-- **Pairing-code sync handshake fixed.** The two devices could miss each other's first messages and one would wait forever. The hello is now repeated until the other side confirms it, library data that arrives early is kept, and a device that starts before it knows its own name no longer crashes the session.
-- A device that connects but never gets an answer now stops after 20 seconds with a clear message, and stalled transfers are detected correctly (retries no longer count as activity).
-- The approval prompt now appears inside the Nearby Sync screen on the device showing the code, with a vibration, instead of as a separate sheet.
+## Built with
 
-## What's new in 1.5.4
+- HTML, CSS and JavaScript, with no build step
+- IndexedDB for saving, and a service worker for offline use
+- [JSZip](https://stuk.github.io/jszip/), [jsPDF](https://github.com/parallax/jsPDF), [Mammoth](https://github.com/mwilliamson/mammoth.js) and [PeerJS](https://peerjs.com), loaded only when needed
+- Hanken Grotesk, Instrument Serif and other typefaces from Google Fonts
 
-- **Pairing-code sync no longer hangs on "Connecting…".** Every step now has a time limit and a clear message: the pairing service (12 s), the direct link between the devices (25 s, with what was tried), and the approval on the device showing the code (2 min). A dead link is reported the moment it fails, with a one-tap "Use Offline (QR)" and a backup-file tip.
-- Fixed the joining device also asking for approval, and the pairing service rejecting messages over 16 KB.
+Want to run it yourself? See [Developing Inkfold](docs/DEVELOPING.md).
 
-## What's new in 1.5.3
+## Status
 
-- **Nearby Sync fixed** on phone and computer. Sync now reports a clear error (and the Wi-Fi hint) when the devices can't reach each other instead of spinning forever, retries its first handshake, shows send and receive progress, stops stalled transfers, keeps the screen awake while syncing, and saves the scene you're typing first.
-- Pairing-code sync asks you to approve the other device before any writing moves, and everything received is validated before it's merged.
-- Offline (QR) codes are smaller and white-framed so they scan more reliably, using the phone's built-in QR detector when it has one.
-- **Character, place and lore photos can be changed again** (the upload button now opens the picker), and the same fix applies to project cover uploads.
+Shipped.
 
-## Files
+## Credits / License
 
-| File | What it does |
-|---|---|
-| `index.html`, `styles.css` | App shell and design |
-| `js/app.js` | Screens and interactions |
-| `js/db.js` | Local storage (IndexedDB), snapshots |
-| `js/model.js` | Projects, chapters, scenes |
-| `js/text.js` | Rich text, Markdown and word counting |
-| `js/io.js` | Backups, import and export |
-| `js/sync.js` | Nearby Sync and merging |
-| `js/bible.js` | Story bible, links, mentions, hover cards, relationship editor |
-| `js/relmap.js` | Relationship web and family tree |
-| `js/revise.js` | Notes, revision rounds, analysis, find & replace, versions, read aloud, reference |
-| `js/modes.js` | Novel, poetry and journal behaviour, calendar |
-| `js/screenplay.js` | Screenplay editor, Fountain, Final Draft, screenplay PDF |
-| `js/timeline.js` | Timeline view |
-| `js/compile.js` | Compile templates, DOCX, PDF, EPUB |
-| `js/security.js` | App lock and project encryption |
-| `js/palette.js` | Command palette and shortcuts |
-| `js/board.js` | Corkboard, outliner, scene details |
-| `js/stats.js` | Writing log, goals, streaks, deadline planner |
-| `js/level.js` | EXP and levels |
-| `js/series.js` | Series: shared story bible, joining and leaving |
-| `js/images.js` | Pictures in scenes (shrinking, storing, showing) |
-| `js/mapfold.js` | Import from Mapfold: reads Mapfold's shared maps, creates and re-syncs maps, marks and places |
-| `js/maps.js` | Maps, pins, labels, regions, routes, layers, ruler, scene places, journeys, map export |
-| `js/sound.js` | Ambient soundscapes and timer chime |
-| `js/ui.js` | Icons, sheets, menus, toasts |
-| `js/libs.js` | Libraries loaded on demand (JSZip, jsPDF, Mammoth, PeerJS, QR) |
-| `sw.js` | Offline support and updates |
-
-When you change any file, bump `VERSION` in `sw.js` so devices pick up the update. Inkfold then shows "A new version of Inkfold is ready".
+Made by [direkjames](https://github.com/direkjames). See [LICENSE](LICENSE).
