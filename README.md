@@ -5,7 +5,7 @@
 **A private, offline writing studio that runs in your browser.**
 
 ![Status: Shipped](https://img.shields.io/badge/status-shipped-brightgreen)
-![Version 1.6](https://img.shields.io/badge/version-1.6-2a7865)
+![Version 1.7](https://img.shields.io/badge/version-1.7-2a7865)
 ![Platform: Web and installable](https://img.shields.io/badge/platform-web%20%2B%20installable-blue)
 ![Works offline](https://img.shields.io/badge/works-offline-86cdb9)
 
@@ -53,7 +53,8 @@ Everything is saved on your device and works offline. Your writing never leaves 
 - **Import from Mapfold:** bring maps and places from the sister app and keep them in sync
 
 **Revising**
-- Margin notes, revision rounds colored by draft, and version history for every scene with side-by-side comparison
+- **Preview as reader:** read your book with turning pages, a cover, contents and a drop-cap chapter opening, in paper, sepia or night
+- Margin notes (highlighted until you resolve them), revision rounds colored by draft, and version history for every scene with side-by-side comparison
 - **Find and replace** across the whole project, including regular expressions
 - A revise panel with readability, adverbs, passive voice, repeated words and long sentences
 - A reference pane to keep another scene or a character open beside the one you write
