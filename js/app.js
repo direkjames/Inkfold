@@ -3,6 +3,7 @@ import { db, deviceInfo } from './db.js';
 import { COVERS, buildTree, flatScenes, newProjectRecord, newChapter, newScene, seedSample, projectStats, touch, createProjectFrom, STATUSES, LABELS, statusOf, labelOf } from './model.js';
 import * as stats from './stats.js';
 import * as sound from './sound.js';
+import { initReader, openReader, closeReader } from './reader.js';
 import { initBoard, renderBoard, renderOutline, sceneDetails, labelMenu } from './board.js';
 import { initBible, renderBible, nameIndex, nameRegex, hoverCardFor, hideHover, relSheet, KINDS } from './bible.js';
 import * as revise from './revise.js';
@@ -574,6 +575,7 @@ async function onWorkspaceClick(e) {
     { k: 'history', icon: 'history', label: 'Version history', run: () => { if (state.view !== 'write') setView('write').then(revise.historySheet); else revise.historySheet(); } },
     { k: 'listen', icon: 'speaker', label: 'Read aloud', run: () => { if (state.view !== 'write') setView('write').then(revise.readAloud); else revise.readAloud(); } },
     { k: 'revise', icon: 'sparkle', label: 'Revision tools', run: () => { if (state.view !== 'write') setView('write').then(() => revise.openPanel('revise')); else revise.openPanel('revise'); } },
+    ...(modeOf(state.project) === 'screenplay' ? [] : [{ k: 'read', icon: 'book', label: 'Preview as reader', run: openReader }]),
     '-',
     { k: 'sound', icon: 'headphones', label: 'Soundscapes', run: () => soundPanel(a) },
     { k: 'stats', icon: 'chart', label: 'Goals & stats', run: statsSheet },
@@ -589,6 +591,7 @@ async function onWorkspaceClick(e) {
   if (act === 'cast') { await saveNow(); return castSheet(state.scene.id, () => updateCrumbs()); }
   if (act === 'project-menu') return menu(t.closest('[data-act]'), [
     { k: 'edit', icon: 'edit', label: 'Project details', run: projectSheet },
+    ...(modeOf(state.project) === 'screenplay' ? [] : [{ k: 'read', icon: 'book', label: 'Preview as reader', run: openReader }]),
     { k: 'export', icon: 'export', label: 'Export…', run: exportSheet },
     { k: 'file', icon: 'share', label: 'Share project file (.inkfold)', run: () => io.exportProjectFile(state.project.id).catch(errorToast) },
     { k: 'series', icon: 'stack', label: state.series ? `Series: ${state.series.title}` : 'Add to a series…', run: () => state.series ? seriesSheet(state.series.id) : projectSheet('series') },
@@ -864,7 +867,7 @@ function changed() {
 }
 
 async function goLibrary() {
-  await saveNow(); revise.stopSpeech(); revise.closePanel(); sp.hideSuggest();
+  closeReader(); await saveNow(); revise.stopSpeech(); revise.closePanel(); sp.hideSuggest();
   $('#workspace').hidden = true; $('#library').hidden = false; document.body.classList.remove('binder-open'); setFocusMode(false);
   state.project = null; delete document.body.dataset.mode; delete document.body.dataset.view;
   return renderLibrary();
@@ -916,6 +919,7 @@ function paletteItems() {
     A('Add a margin note', 'comment', () => revise.addComment(), 'Mod+Shift+M', 'comment');
     A('Revision tools', 'sparkle', () => setView('write').then(() => revise.openPanel('revise')), null, 'readability adverbs passive');
     A('Read aloud', 'speaker', () => setView('write').then(revise.readAloud), null, 'listen speech');
+    if (mode !== 'screenplay') A('Preview as reader', 'book', openReader, null, 'read book preview pages epub wattpad');
     A('Compile & export', 'export', exportSheet, null, 'export pdf docx epub fountain');
     A('Soundscapes', 'headphones', () => soundPanel($('.topbar [data-act="more-tools"]')), null, 'rain music ambient');
     A('Project details', 'edit', projectSheet, null, 'cover title author');
@@ -1364,6 +1368,7 @@ async function projectSheet(focus) {
     body: `<div class="field"><label class="field-label" for="pd-title">Title</label><input class="input" id="pd-title" value="${esc(p.title)}" maxlength="120"></div>
       <div class="field"><label class="field-label" for="pd-sub">Subtitle</label><input class="input" id="pd-sub" value="${esc(p.subtitle || '')}" placeholder="Optional" maxlength="120"></div>
       <div class="field"><label class="field-label" for="pd-author">Author</label><input class="input" id="pd-author" value="${esc(p.author || '')}" maxlength="80"></div>
+      <div class="field"><label class="field-label pd-sum-label" for="pd-summary"><span>Summary</span><small class="tnum" id="pd-sum-n"></small></label><textarea class="input prose pd-summary" id="pd-summary" rows="4" maxlength="4000" placeholder="What the book is about, like the blurb on the back cover.">${esc(p.summary || '')}</textarea><span class="note" style="text-align:left">${p.enc ? 'Shown on the reader preview’s first page. Like the title, it isn’t encrypted.' : 'Shown on the first page when you preview the book as a reader, and added to EPUB exports.'}</span></div>
       <div class="field"><span class="field-label">Cover</span>
         <div class="cover-edit"><div class="cover-thumb" id="pd-thumb"></div>
           <div class="cover-edit-side"><div class="cover-picks">${COVERS.map((c, i) => `<button class="cover-pick ${i === cover ? 'on' : ''}" data-i="${i}" style="--cbg:${c.bg}" aria-label="${c.name}"></button>`).join('')}</div>
@@ -1390,6 +1395,9 @@ async function projectSheet(focus) {
   };
   $('#pd-remove', s.wrap).onclick = () => { coverImage = null; thumb(); };
   thumb();
+  const sumBox = $('#pd-summary', s.wrap);
+  const sumCount = () => { const w = countWords(sumBox.value); $('#pd-sum-n', s.wrap).textContent = w ? `${num(w)} word${w === 1 ? '' : 's'}` : ''; sumBox.style.height = 'auto'; sumBox.style.height = Math.min(320, sumBox.scrollHeight + 2) + 'px'; };
+  sumBox.addEventListener('input', sumCount); requestAnimationFrame(sumCount);
   let pmode = modeOf(p);
   $$('#pd-mode button', s.wrap).forEach(b => b.onclick = () => { pmode = b.dataset.v; $$('#pd-mode button', s.wrap).forEach(x => x.classList.toggle('on', x === b)); });
   $$('#pd-format button', s.wrap).forEach(b => b.onclick = () => { format = b.dataset.v; $$('#pd-format button', s.wrap).forEach(x => x.classList.toggle('on', x === b)); });
@@ -1416,7 +1424,7 @@ async function projectSheet(focus) {
         if (want) await series.joinSeries(p, want);
       } catch (e) { return errorToast(e); }
     }
-    Object.assign(p, { title: $('#pd-title').value.trim() || 'Untitled project', subtitle: $('#pd-sub').value.trim(), author: $('#pd-author').value.trim(), cover, format, coverImage, target: parseInt($('#pd-target').value, 10) || null, deadline: $('#pd-deadline').value || null });
+    Object.assign(p, { title: $('#pd-title').value.trim() || 'Untitled project', subtitle: $('#pd-sub').value.trim(), author: $('#pd-author').value.trim(), summary: $('#pd-summary').value.trim(), cover, format, coverImage, target: parseInt($('#pd-target').value, 10) || null, deadline: $('#pd-deadline').value || null });
     if (p.sample) p.sample = false;
     touch(p); await db.put('projects', p);
     const modeChanged = pmode !== modeOf(p);
@@ -2056,6 +2064,7 @@ async function boot() {
       findInScene: async (id, terms) => { await setView('write'); await loadScene(id); setTimeout(() => revise.highlightFind(nameRegex(terms), true), 60); },
       openMap: (mapId, markId) => setView('map', { map: { mapId, select: markId } }),
       onChange: () => { refreshNamesSoon(); } });
+    initReader({ state, settings, saveSettings, saveNow });
     revise.initRevise({ state, settings, saveSettings, saveNow, saveItem, isMd,
       reloadScene: async () => { const id = state.scene.id; state.dirty = false; state.items = await series.loadItems(state.project); await loadScene(id); renderBinder(); },
       openScene: async id => { await setView('write'); await loadScene(id); },
@@ -2068,7 +2077,7 @@ async function boot() {
     initTimeline({ state, saveItem, openScene: async id => { await setView('write'); await loadScene(id); }, onChange: (o = {}) => { renderBinder(); updateCrumbs(); if (!o.skipView) renderCurrentView(); } });
     await sec.registerProjects();
     await sec.initLock({
-      beforeLock: async () => { await saveNow(); while (sheets.length) sheets[sheets.length - 1].close(); closePop(); closePalette(); revise.stopSpeech(); if (state.project && state.project.enc) await goLibrary(); },
+      beforeLock: async () => { closeReader(); await saveNow(); while (sheets.length) sheets[sheets.length - 1].close(); closePop(); closePalette(); revise.stopSpeech(); if (state.project && state.project.enc) await goLibrary(); },
       afterUnlock: () => { if (!$('#library').hidden) renderLibrary(); },
     });
     state.device = await deviceInfo();
