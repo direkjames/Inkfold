@@ -70,7 +70,7 @@ export function renderPanel() {
   else if (tab === 'revise') renderRevise(body);
   else renderReference(body);
 }
-export function onSceneChanged() { if (panelOpen()) renderPanel(); }
+export function onSceneChanged() { if (panelOpen()) renderPanel(); else reanchorNotes(); }
 export const onEditorInput = debounce(() => { if (panelOpen() && tab === 'revise') { runAnalysis(); updateStatsBlock(); } }, 700);
 
 // ---------------------------------------------------------------- margin notes (comments)
@@ -84,12 +84,12 @@ export async function addComment() {
   const blockOf = n => { while (n && n.parentNode !== ed) n = n.parentNode; return n; };
   if (blockOf(r.startContainer) !== blockOf(r.endContainer)) return toast('Select text within one paragraph');
   const id = uid('cm-');
-  const quote = r.toString().trim().slice(0, 140);
-  // wrap the selection directly (insertHTML would turn <mark> into a styled <span>)
-  const mark = document.createElement('mark'); mark.className = 'cmt'; mark.dataset.c = id;
-  mark.appendChild(r.extractContents()); r.insertNode(mark);
+  const full = r.toString().trim();
+  const quote = full.slice(0, 140);
+  const mark = wrapMark(r, id);
   sel.removeAllRanges(); const after = document.createRange(); after.setStartAfter(mark); after.collapse(true); sel.addRange(after);
-  const it = touch({ id, projectId: ctx.state.project.id, type: 'comment', parentId: ctx.state.scene.id, order: 0, title: quote, content: '', deleted: false, data: { text: '', resolved: false, at: Date.now() } });
+  // quote: the exact words, so the highlight can be found again if the browser drops the <mark>
+  const it = touch({ id, projectId: ctx.state.project.id, type: 'comment', parentId: ctx.state.scene.id, order: 0, title: quote, content: '', deleted: false, data: { text: '', resolved: false, at: Date.now(), quote: full.slice(0, 2000) } });
   ctx.state.items.push(it);
   ctx.markChanged(); haptic(6);
   openPanel('notes');
@@ -97,9 +97,36 @@ export async function addComment() {
   await ctx.saveItem(it);
 }
 
+// wrap a range directly (insertHTML would turn <mark> into a styled <span>)
+function wrapMark(r, id) {
+  const mark = document.createElement('mark'); mark.className = 'cmt'; mark.dataset.c = id;
+  mark.appendChild(r.extractContents()); r.insertNode(mark);
+  return mark;
+}
+// Open notes stay highlighted. If a note's highlight went missing (reopened after Resolve, the browser
+// rewrote the paragraph, an older save) but its words are still in the scene, put the highlight back.
+export function reanchorNotes() {
+  const ed = $('#editor'), sc = ctx.state.scene;
+  if (!ed || !sc || ctx.isMd()) return 0;
+  let n = 0;
+  for (const c of commentsOf(sc.id)) {
+    if (!c.data || c.data.resolved || ed.querySelector(`mark[data-c="${c.id}"]`)) continue;
+    const q = (c.data.quote || c.title || '').trim(); if (q.length < 2) continue;
+    for (const b of blocksOf(ed)) {
+      const i = b.el.textContent.indexOf(q); if (i < 0) continue;
+      const r = rangeIn(b.el, i, i + q.length);
+      if (r) { wrapMark(r, c.id); n++; }
+      break;
+    }
+  }
+  if (n) ctx.markChanged();
+  return n;
+}
+
 function renderNotes(body) {
   const sc = ctx.state.scene; if (!sc) return;
   const ed = $('#editor');
+  reanchorNotes();
   const list = commentsOf(sc.id);
   const pos = c => { const m = ed.querySelector(`mark[data-c="${c.id}"]`); return m ? m : null; };
   const open = list.filter(c => !c.data.resolved), done = list.filter(c => c.data.resolved);
@@ -122,13 +149,13 @@ function renderNotes(body) {
         if (a === 'resolve') c.data.resolved = true; else { c.deleted = true; c.deletedAt = Date.now(); c.deletedWith = sc.id; }
         await ctx.saveItem(c); renderNotes(body);
         if (a === 'resolve') toast('Note resolved');
-      } else if (a === 'reopen') { c.data.resolved = false; await ctx.saveItem(c); renderNotes(body); }
+      } else if (a === 'reopen') { c.data.resolved = false; await ctx.saveItem(c); renderNotes(body); flashMark(c.id); }
     });
   });
 }
 const cmtCard = (c, orphan, resolved) => `<div class="ncard ${orphan ? 'orphan' : ''} ${resolved ? 'resolved' : ''}" data-cmt="${c.id}">
   <blockquote>${esc(c.title || '')}</blockquote>
-  ${orphan ? '<span class="cmt-warn">The text this note was attached to has been deleted.</span>' : ''}
+  ${orphan ? '<span class="cmt-warn">Couldn’t find the words this note was attached to. They may have been changed or deleted.</span>' : ''}
   ${resolved ? `<p>${esc(c.data.text || '')}</p>` : `<textarea rows="1" placeholder="Write a note…" maxlength="1200">${esc(c.data.text || '')}</textarea>`}
   <div class="cmt-foot"><span>${ago(c.data.at)}</span>${resolved ? `<button data-act-c="reopen">Reopen</button><button data-act-c="delete">Delete</button>` : `<button data-act-c="resolve">${icon('check')}Resolve</button><button data-act-c="delete">Delete</button>`}</div>
 </div>`;
