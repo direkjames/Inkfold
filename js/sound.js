@@ -105,12 +105,19 @@ export function stop() {
   nodes = []; master = null; current = null;
 }
 
+function audio(playback) {
+  // iPhone/iPad mute Web Audio when the silent switch is on unless the page asks for playback
+  if (playback) try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch {}
+  ctx = ctx || new (window.AudioContext || window.webkitAudioContext)();
+  if (ctx.state !== 'running') { const r = ctx.resume(); if (r && r.catch) r.catch(() => {}); }
+  return ctx;
+}
+
 export function play(id) {
   stop();
   if (!SCENES[id]) return;
-  ctx = ctx || new (window.AudioContext || window.webkitAudioContext)();
-  ctx.resume();
-  master = ctx.createGain(); master.gain.value = 0; master.connect(ctx.destination);
+  audio(true);
+  master = ctx.createGain(); master.gain.setValueAtTime(0, ctx.currentTime); master.connect(ctx.destination);
   master.gain.linearRampToValueAtTime(volume * 0.9, ctx.currentTime + 1.5);
   SCENES[id](master);
   current = id;
@@ -126,7 +133,7 @@ export const playing = () => current;
 // A soft two-note chime for timers
 export function chime() {
   try {
-    ctx = ctx || new (window.AudioContext || window.webkitAudioContext)(); ctx.resume();
+    audio();
     const t = ctx.currentTime;
     [[659.25, 0], [987.77, 0.18]].forEach(([f, d]) => {
       const o = ctx.createOscillator(); o.type = 'sine'; o.frequency.value = f;

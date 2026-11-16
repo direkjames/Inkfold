@@ -139,9 +139,14 @@ export function toast(msg, action, ms = 3600) {
 export const errorToast = e => { console.error(e); toast(e && e.message ? e.message : 'Something went wrong. Please try again.'); };
 
 // Popovers
-let openPop = null;
+let openPop = null, popOff = null;
 export const popOpen = () => !!openPop;
-export function closePop() { if (openPop) { openPop.remove(); openPop = null; } }
+// Also drop the outside-tap listener, or a popover opened from a menu (Soundscapes, sprints)
+// would be closed by the old menu's listener on the first tap inside it.
+export function closePop() {
+  if (popOff) { document.removeEventListener('pointerdown', popOff, true); popOff = null; }
+  if (openPop) { openPop.remove(); openPop = null; }
+}
 export function popover(anchor, content, { align = 'end', cls = '' } = {}) {
   closePop();
   const p = el(`<div class="pop ${cls}" role="menu"></div>`);
@@ -156,7 +161,9 @@ export function popover(anchor, content, { align = 'end', cls = '' } = {}) {
   p.style.left = left + 'px'; p.style.top = top + 'px';
   openPop = p;
   setTimeout(() => {
-    const off = e => { if (!p.contains(e.target)) { closePop(); document.removeEventListener('pointerdown', off, true); } };
+    if (openPop !== p) return;
+    const off = e => { if (openPop === p && !p.contains(e.target)) closePop(); };
+    popOff = off;
     document.addEventListener('pointerdown', off, true);
   });
   return p;
