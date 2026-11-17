@@ -202,13 +202,24 @@ function lev(a, b) {
   for (let i = 1; i <= a.length; i++) for (let j = 1; j <= b.length; j++) d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
   return d[a.length][b.length];
 }
+// Letters include accents (è) and combining marks, so a name like "Taullè" is one whole word.
+const WORD_CH = '\\p{L}\\p{M}\\p{N}';
+const NAME_WORD = new RegExp(`(?<![${WORD_CH}'’])\\p{Lu}[\\p{L}\\p{M}'’]{3,}`, 'gu');
+const nfc = s => (s || '').normalize('NFC');
+const bare = s => s.replace(/['’]s$/u, '').replace(/['’]+$/u, ''); // Catherine's -> Catherine
+export const nameFixRegex = word => new RegExp(`(?<![${WORD_CH}])${word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![${WORD_CH}])`, 'gu');
 export function nameCheck(text) {
   const known = new Set(), tokens = [];
-  for (const e of entries()) for (const n of [e.title, ...((e.data && e.data.aliases) || [])]) for (const t of (n || '').split(/\s+/)) if (t.length >= 4) { known.add(t); tokens.push(t); }
+  for (const e of entries()) for (const n of [e.title, ...((e.data && e.data.aliases) || [])]) for (let t of nfc(n).split(/\s+/)) {
+    t = bare(t.replace(/^[^\p{L}]+|[^\p{L}\p{M}]+$/gu, ''));
+    if (t.length >= 4 && !known.has(t)) { known.add(t); tokens.push(t); }
+  }
   if (!tokens.length) return [];
+  const knownLower = new Set([...known].map(t => t.toLowerCase()));
   const found = new Map();
-  for (const w of (text.match(/\b\p{Lu}[\p{L}'’]{3,}\b/gu) || [])) {
-    if (known.has(w)) continue;
+  for (const raw of (nfc(text).match(NAME_WORD) || [])) {
+    const w = bare(raw);
+    if (w.length < 4 || known.has(w) || knownLower.has(w.toLowerCase())) continue;
     for (const t of tokens) {
       if (w[0] !== t[0]) continue;
       const d = lev(w.toLowerCase(), t.toLowerCase());
@@ -267,7 +278,7 @@ function updateStatsBlock() {
   const names = nameCheck(text);
   $('#rvNames').innerHTML = `<div class="rv-h"><b>Name check</b><span>Spellings close to a name in your story bible.</span></div>${names.length ? names.map(n => `<div class="nc-row"><span><s>${esc(n.word)}</s> → <b>${esc(n.name)}</b> <small class="tnum">×${n.n}</small></span><button class="btn btn-ghost btn-sm" data-fix="${esc(n.word)}" data-to="${esc(n.name)}">Fix</button></div>`).join('') : `<p class="note" style="text-align:left">${entries().length ? 'All names look consistent.' : 'Add characters and places to the story bible to check names.'}</p>`}`;
   $$('[data-fix]', $('#rvNames')).forEach(b => b.onclick = async () => {
-    const n = await replaceInScenes(new RegExp(`\\b${b.dataset.fix}\\b`, 'g'), b.dataset.to, [ctx.state.scene.id]);
+    const n = await replaceInScenes(nameFixRegex(b.dataset.fix), b.dataset.to, [ctx.state.scene.id]);
     toast(`Fixed ${n} spelling${n === 1 ? '' : 's'}`); updateStatsBlock();
   });
 }
