@@ -23,7 +23,7 @@ import * as sync from './sync.js';
 import { loadLib, LIBS } from './libs.js';
 import { ICONS, icon, MARK, $, $$, esc, num, el, debounce, ago, haptic, toast, errorToast, closePop, popOpen, popover, menu, sheets, sheet, confirmSheet, pickFiles } from './ui.js';
 
-const VERSION = '1.7.0';
+const VERSION = '1.7.1';
 
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape') {
@@ -1597,7 +1597,7 @@ function sprintMenu(anchor) {
 function soundPanel(anchor) {
   const cur = sound.playing();
   const p = popover(anchor, `<div class="type-panel">
-    <div><h4>Soundscapes</h4><p class="sp-sub">Generated on your device, so they play offline.</p></div>
+    <div><h4>Soundscapes</h4><p class="sp-sub">Real recordings. Each one is saved on your device after its first play, so it works offline too.</p></div>
     <div class="snd-grid">${sound.SOUNDS.map(x => `<button class="snd ${cur === x.id ? 'on' : ''}" data-s="${x.id}">${icon(x.icon)}<span>${x.name}</span></button>`).join('')}</div>
     <label class="slider-row"><span>${icon('volume')}</span><input type="range" id="snd-vol" min="0" max="1" step="0.05" value="${settings.volume}"><output></output></label>
     <button class="btn btn-quiet btn-sm" id="snd-off" ${cur ? '' : 'hidden'}>${icon('stop')}Stop</button>
@@ -1607,7 +1607,8 @@ function soundPanel(anchor) {
   fill();
   vol.oninput = () => { settings.volume = +vol.value; sound.setVolume(settings.volume); fill(); };
   vol.onchange = saveSettings;
-  const mark = () => { const c = sound.playing(); $$('.snd', p).forEach(b => b.classList.toggle('on', b.dataset.s === c)); $('#snd-off', p).hidden = !c; $$('[data-act="sound"]').forEach(b => b.classList.toggle('on', !!c)); };
+  const mark = () => { const c = sound.playing(), ld = sound.loading(); $$('.snd', p).forEach(b => { b.classList.toggle('on', b.dataset.s === c); b.classList.toggle('loading', ld && b.dataset.s === c); }); $('#snd-off', p).hidden = !c; $$('[data-act="sound"]').forEach(b => b.classList.toggle('on', !!c)); };
+  sound.subscribe(mark, msg => toast(msg));
   $$('.snd', p).forEach(b => b.onclick = () => { if (sound.playing() === b.dataset.s) sound.stop(); else { sound.setVolume(settings.volume); sound.play(b.dataset.s); } mark(); haptic(5); });
   $('#snd-off', p).onclick = () => { sound.stop(); mark(); };
 }

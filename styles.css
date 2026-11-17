@@ -664,11 +664,14 @@ body:not([data-view="write"]) .statusbar:not(:has(.sprint-pill:not([hidden]))) {
 .sr-row span { font-size: 11.5px; color: var(--muted); }
 
 /* ---------- Sound ---------- */
-.snd-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+.snd-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; max-height: min(52vh, 360px); overflow-y: auto; padding: 2px; margin: -2px; }
 .snd { display: flex; align-items: center; gap: 10px; padding: 12px; border-radius: 12px; background: var(--surface); box-shadow: inset 0 0 0 1px var(--line-soft); font-weight: 600; font-size: 13.5px; transition: box-shadow .2s var(--ease), background .2s var(--ease); }
 .snd svg { width: 20px; height: 20px; color: var(--text-2); }
 .snd.on { background: var(--accent-soft); box-shadow: inset 0 0 0 1.5px var(--accent); color: var(--accent); }
 .snd.on svg { color: var(--accent); animation: breathe 2.4s var(--ease) infinite; }
+.snd.loading { opacity: .7; }
+.snd.loading svg { animation-duration: 1s; }
+.snd span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .slider-row span svg { width: 16px; height: 16px; }
 
 /* ---------- Celebration ---------- */

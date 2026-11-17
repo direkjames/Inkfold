@@ -5,7 +5,7 @@
 **A private, offline writing studio that runs in your browser.**
 
 ![Status: Shipped](https://img.shields.io/badge/status-shipped-brightgreen)
-![Version 1.7](https://img.shields.io/badge/version-1.7-2a7865)
+![Version 1.7.1](https://img.shields.io/badge/version-1.7.1-2a7865)
 ![Platform: Web and installable](https://img.shields.io/badge/platform-web%20%2B%20installable-blue)
 ![Works offline](https://img.shields.io/badge/works-offline-86cdb9)
 
@@ -41,6 +41,7 @@ Everything is saved on your device and works offline. Your writing never leaves 
 - Pictures in scenes, with captions and resizing
 - Live word counts and constant autosave
 - **Read aloud** with sentence highlighting
+- **Soundscapes:** ten ambient recordings (rain, fireplace, cafe, forest and more) that loop smoothly and work offline
 
 **Planning**
 - **Corkboard:** index cards per chapter with synopsis, status, point of view, label and word target. Drag cards between chapters.
