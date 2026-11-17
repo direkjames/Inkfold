@@ -533,6 +533,9 @@ textarea.input { height: auto; min-height: 92px; padding: 12px 14px; resize: ver
 .cover-thumb { width: 84px; aspect-ratio: 2 / 3; border-radius: 3px 8px 8px 3px; flex: none; box-shadow: var(--shadow-sm), inset 5px 0 0 rgba(0, 0, 0, .22); display: flex; align-items: flex-end; padding: 8px 8px 8px 12px; font-family: var(--font-display); font-size: 13px; line-height: 1.05; overflow: hidden; background-size: cover; }
 .cover-edit-side { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
 textarea.input.prose { font-family: var(--font-ui); font-size: 14.5px; word-break: normal; line-height: 1.5; }
+.pd-sum-label { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.pd-sum-label small { font-size: 11px; font-weight: 600; letter-spacing: 0; text-transform: none; color: var(--muted); }
+textarea.input.pd-summary { font-family: var(--ed-font); font-size: 16px; line-height: 1.6; min-height: 110px; max-height: 320px; }
 
 /* topbar views */
 .view-seg { flex: none; margin-right: 4px; }

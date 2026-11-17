@@ -1364,6 +1364,7 @@ async function projectSheet(focus) {
     body: `<div class="field"><label class="field-label" for="pd-title">Title</label><input class="input" id="pd-title" value="${esc(p.title)}" maxlength="120"></div>
       <div class="field"><label class="field-label" for="pd-sub">Subtitle</label><input class="input" id="pd-sub" value="${esc(p.subtitle || '')}" placeholder="Optional" maxlength="120"></div>
       <div class="field"><label class="field-label" for="pd-author">Author</label><input class="input" id="pd-author" value="${esc(p.author || '')}" maxlength="80"></div>
+      <div class="field"><label class="field-label pd-sum-label" for="pd-summary"><span>Summary</span><small class="tnum" id="pd-sum-n"></small></label><textarea class="input prose pd-summary" id="pd-summary" rows="4" maxlength="4000" placeholder="What the book is about, like the blurb on the back cover.">${esc(p.summary || '')}</textarea><span class="note" style="text-align:left">${p.enc ? 'Shown on the reader preview’s first page. Like the title, it isn’t encrypted.' : 'Shown on the first page when you preview the book as a reader, and added to EPUB exports.'}</span></div>
       <div class="field"><span class="field-label">Cover</span>
         <div class="cover-edit"><div class="cover-thumb" id="pd-thumb"></div>
           <div class="cover-edit-side"><div class="cover-picks">${COVERS.map((c, i) => `<button class="cover-pick ${i === cover ? 'on' : ''}" data-i="${i}" style="--cbg:${c.bg}" aria-label="${c.name}"></button>`).join('')}</div>
@@ -1390,6 +1391,9 @@ async function projectSheet(focus) {
   };
   $('#pd-remove', s.wrap).onclick = () => { coverImage = null; thumb(); };
   thumb();
+  const sumBox = $('#pd-summary', s.wrap);
+  const sumCount = () => { const w = countWords(sumBox.value); $('#pd-sum-n', s.wrap).textContent = w ? `${num(w)} word${w === 1 ? '' : 's'}` : ''; sumBox.style.height = 'auto'; sumBox.style.height = Math.min(320, sumBox.scrollHeight + 2) + 'px'; };
+  sumBox.addEventListener('input', sumCount); requestAnimationFrame(sumCount);
   let pmode = modeOf(p);
   $$('#pd-mode button', s.wrap).forEach(b => b.onclick = () => { pmode = b.dataset.v; $$('#pd-mode button', s.wrap).forEach(x => x.classList.toggle('on', x === b)); });
   $$('#pd-format button', s.wrap).forEach(b => b.onclick = () => { format = b.dataset.v; $$('#pd-format button', s.wrap).forEach(x => x.classList.toggle('on', x === b)); });
@@ -1416,7 +1420,7 @@ async function projectSheet(focus) {
         if (want) await series.joinSeries(p, want);
       } catch (e) { return errorToast(e); }
     }
-    Object.assign(p, { title: $('#pd-title').value.trim() || 'Untitled project', subtitle: $('#pd-sub').value.trim(), author: $('#pd-author').value.trim(), cover, format, coverImage, target: parseInt($('#pd-target').value, 10) || null, deadline: $('#pd-deadline').value || null });
+    Object.assign(p, { title: $('#pd-title').value.trim() || 'Untitled project', subtitle: $('#pd-sub').value.trim(), author: $('#pd-author').value.trim(), summary: $('#pd-summary').value.trim(), cover, format, coverImage, target: parseInt($('#pd-target').value, 10) || null, deadline: $('#pd-deadline').value || null });
     if (p.sample) p.sample = false;
     touch(p); await db.put('projects', p);
     const modeChanged = pmode !== modeOf(p);
