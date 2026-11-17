@@ -3,6 +3,7 @@ import { db, deviceInfo } from './db.js';
 import { COVERS, buildTree, flatScenes, newProjectRecord, newChapter, newScene, seedSample, projectStats, touch, createProjectFrom, STATUSES, LABELS, statusOf, labelOf } from './model.js';
 import * as stats from './stats.js';
 import * as sound from './sound.js';
+import { initReader, openReader, closeReader } from './reader.js';
 import { initBoard, renderBoard, renderOutline, sceneDetails, labelMenu } from './board.js';
 import { initBible, renderBible, nameIndex, nameRegex, hoverCardFor, hideHover, relSheet, KINDS } from './bible.js';
 import * as revise from './revise.js';
@@ -22,7 +23,7 @@ import * as sync from './sync.js';
 import { loadLib, LIBS } from './libs.js';
 import { ICONS, icon, MARK, $, $$, esc, num, el, debounce, ago, haptic, toast, errorToast, closePop, popOpen, popover, menu, sheets, sheet, confirmSheet, pickFiles } from './ui.js';
 
-const VERSION = '1.6.0';
+const VERSION = '1.7.0';
 
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape') {
@@ -574,6 +575,7 @@ async function onWorkspaceClick(e) {
     { k: 'history', icon: 'history', label: 'Version history', run: () => { if (state.view !== 'write') setView('write').then(revise.historySheet); else revise.historySheet(); } },
     { k: 'listen', icon: 'speaker', label: 'Read aloud', run: () => { if (state.view !== 'write') setView('write').then(revise.readAloud); else revise.readAloud(); } },
     { k: 'revise', icon: 'sparkle', label: 'Revision tools', run: () => { if (state.view !== 'write') setView('write').then(() => revise.openPanel('revise')); else revise.openPanel('revise'); } },
+    ...(modeOf(state.project) === 'screenplay' ? [] : [{ k: 'read', icon: 'book', label: 'Preview as reader', run: openReader }]),
     '-',
     { k: 'sound', icon: 'headphones', label: 'Soundscapes', run: () => soundPanel(a) },
     { k: 'stats', icon: 'chart', label: 'Goals & stats', run: statsSheet },
@@ -589,6 +591,7 @@ async function onWorkspaceClick(e) {
   if (act === 'cast') { await saveNow(); return castSheet(state.scene.id, () => updateCrumbs()); }
   if (act === 'project-menu') return menu(t.closest('[data-act]'), [
     { k: 'edit', icon: 'edit', label: 'Project details', run: projectSheet },
+    ...(modeOf(state.project) === 'screenplay' ? [] : [{ k: 'read', icon: 'book', label: 'Preview as reader', run: openReader }]),
     { k: 'export', icon: 'export', label: 'Export…', run: exportSheet },
     { k: 'file', icon: 'share', label: 'Share project file (.inkfold)', run: () => io.exportProjectFile(state.project.id).catch(errorToast) },
     { k: 'series', icon: 'stack', label: state.series ? `Series: ${state.series.title}` : 'Add to a series…', run: () => state.series ? seriesSheet(state.series.id) : projectSheet('series') },
@@ -864,7 +867,7 @@ function changed() {
 }
 
 async function goLibrary() {
-  await saveNow(); revise.stopSpeech(); revise.closePanel(); sp.hideSuggest();
+  closeReader(); await saveNow(); revise.stopSpeech(); revise.closePanel(); sp.hideSuggest();
   $('#workspace').hidden = true; $('#library').hidden = false; document.body.classList.remove('binder-open'); setFocusMode(false);
   state.project = null; delete document.body.dataset.mode; delete document.body.dataset.view;
   return renderLibrary();
@@ -916,6 +919,7 @@ function paletteItems() {
     A('Add a margin note', 'comment', () => revise.addComment(), 'Mod+Shift+M', 'comment');
     A('Revision tools', 'sparkle', () => setView('write').then(() => revise.openPanel('revise')), null, 'readability adverbs passive');
     A('Read aloud', 'speaker', () => setView('write').then(revise.readAloud), null, 'listen speech');
+    if (mode !== 'screenplay') A('Preview as reader', 'book', openReader, null, 'read book preview pages epub wattpad');
     A('Compile & export', 'export', exportSheet, null, 'export pdf docx epub fountain');
     A('Soundscapes', 'headphones', () => soundPanel($('.topbar [data-act="more-tools"]')), null, 'rain music ambient');
     A('Project details', 'edit', projectSheet, null, 'cover title author');
@@ -2060,6 +2064,7 @@ async function boot() {
       findInScene: async (id, terms) => { await setView('write'); await loadScene(id); setTimeout(() => revise.highlightFind(nameRegex(terms), true), 60); },
       openMap: (mapId, markId) => setView('map', { map: { mapId, select: markId } }),
       onChange: () => { refreshNamesSoon(); } });
+    initReader({ state, settings, saveSettings, saveNow });
     revise.initRevise({ state, settings, saveSettings, saveNow, saveItem, isMd,
       reloadScene: async () => { const id = state.scene.id; state.dirty = false; state.items = await series.loadItems(state.project); await loadScene(id); renderBinder(); },
       openScene: async id => { await setView('write'); await loadScene(id); },
@@ -2072,7 +2077,7 @@ async function boot() {
     initTimeline({ state, saveItem, openScene: async id => { await setView('write'); await loadScene(id); }, onChange: (o = {}) => { renderBinder(); updateCrumbs(); if (!o.skipView) renderCurrentView(); } });
     await sec.registerProjects();
     await sec.initLock({
-      beforeLock: async () => { await saveNow(); while (sheets.length) sheets[sheets.length - 1].close(); closePop(); closePalette(); revise.stopSpeech(); if (state.project && state.project.enc) await goLibrary(); },
+      beforeLock: async () => { closeReader(); await saveNow(); while (sheets.length) sheets[sheets.length - 1].close(); closePop(); closePalette(); revise.stopSpeech(); if (state.project && state.project.enc) await goLibrary(); },
       afterUnlock: () => { if (!$('#library').hidden) renderLibrary(); },
     });
     state.device = await deviceInfo();
