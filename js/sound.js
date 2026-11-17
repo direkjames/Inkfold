@@ -1,109 +1,22 @@
-// Inkfold — ambient soundscapes, generated live with the Web Audio API (no audio files, fully offline).
-let ctx = null, master = null, nodes = [], timers = [], current = null, volume = 0.5;
-
-function noiseBuffer(kind, seconds = 6) {
-  const len = ctx.sampleRate * seconds;
-  const buf = ctx.createBuffer(2, len, ctx.sampleRate);
-  for (let c = 0; c < 2; c++) {
-    const d = buf.getChannelData(c);
-    let b0 = 0, b1 = 0, b2 = 0, b3 = 0, b4 = 0, b5 = 0, b6 = 0, last = 0;
-    for (let i = 0; i < len; i++) {
-      const w = Math.random() * 2 - 1;
-      if (kind === 'white') d[i] = w * 0.5;
-      else if (kind === 'brown') { last = (last + 0.02 * w) / 1.02; d[i] = last * 3.2; }
-      else { // pink (Paul Kellet)
-        b0 = 0.99886 * b0 + w * 0.0555179; b1 = 0.99332 * b1 + w * 0.0750759; b2 = 0.969 * b2 + w * 0.153852;
-        b3 = 0.8665 * b3 + w * 0.3104856; b4 = 0.55 * b4 + w * 0.5329522; b5 = -0.7616 * b5 - w * 0.016898;
-        d[i] = (b0 + b1 + b2 + b3 + b4 + b5 + b6 + w * 0.5362) * 0.11; b6 = w * 0.115926;
-      }
-    }
-  }
-  return buf;
-}
-function loop(buf) { const s = ctx.createBufferSource(); s.buffer = buf; s.loop = true; s.start(); nodes.push(s); return s; }
-function filter(type, freq, q = 0.7) { const f = ctx.createBiquadFilter(); f.type = type; f.frequency.value = freq; f.Q.value = q; return f; }
-function gain(v) { const g = ctx.createGain(); g.gain.value = v; nodes.push(g); return g; }
-function chain(...n) { for (let i = 0; i < n.length - 1; i++) n[i].connect(n[i + 1]); return n[n.length - 1]; }
-function lfo(param, rate, depth, base) {
-  const o = ctx.createOscillator(); o.frequency.value = rate; const g = ctx.createGain(); g.gain.value = depth;
-  o.connect(g); g.connect(param); param.value = base; o.start(); nodes.push(o, g);
-}
-function burstBuffer(ms, decay) {
-  const len = Math.floor(ctx.sampleRate * ms / 1000);
-  const b = ctx.createBuffer(1, len, ctx.sampleRate); const d = b.getChannelData(0);
-  for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, decay);
-  return b;
-}
-// schedule short one-shot sounds at random intervals
-function sprinkle(makeOne, minMs, maxMs) {
-  let next = ctx.currentTime + 0.1;
-  const tick = () => {
-    while (next < ctx.currentTime + 0.4) { makeOne(next); next += (minMs + Math.random() * (maxMs - minMs)) / 1000; }
-  };
-  tick(); timers.push(setInterval(tick, 150));
-}
-
-const SCENES = {
-  rain(out) {
-    chain(loop(noiseBuffer('pink')), filter('highpass', 350), filter('lowpass', 6500), gain(0.55), out);
-    chain(loop(noiseBuffer('brown')), filter('lowpass', 300), gain(0.35), out);
-    const drop = burstBuffer(22, 3);
-    sprinkle(t => {
-      const s = ctx.createBufferSource(); s.buffer = drop; s.playbackRate.value = 0.6 + Math.random() * 1.2;
-      const f = filter('bandpass', 1800 + Math.random() * 3500, 2); const g = ctx.createGain(); g.gain.value = 0.04 + Math.random() * 0.12;
-      const p = ctx.createStereoPanner(); p.pan.value = Math.random() * 1.6 - 0.8;
-      chain(s, f, g, p, out); s.start(t);
-    }, 15, 70);
-  },
-  fireplace(out) {
-    const base = chain(loop(noiseBuffer('brown')), filter('lowpass', 420), gain(0.6));
-    const g = gain(1); lfo(g.gain, 0.23, 0.18, 0.85); chain(base, g, out);
-    const crack = burstBuffer(9, 6), pop = burstBuffer(40, 4);
-    sprinkle(t => {
-      const big = Math.random() < 0.08;
-      const s = ctx.createBufferSource(); s.buffer = big ? pop : crack; s.playbackRate.value = 0.7 + Math.random() * 0.8;
-      const f = filter('highpass', big ? 700 : 1500 + Math.random() * 2500); const v = ctx.createGain(); v.gain.value = big ? 0.45 : 0.05 + Math.random() * 0.25;
-      const p = ctx.createStereoPanner(); p.pan.value = Math.random() * 0.8 - 0.4;
-      chain(s, f, v, p, out); s.start(t);
-    }, 40, 420);
-  },
-  cafe(out) {
-    chain(loop(noiseBuffer('brown')), filter('lowpass', 900), gain(0.45), out);
-    const murmur = chain(loop(noiseBuffer('pink')), filter('bandpass', 520, 1.2), gain(0.0));
-    const g = gain(1); lfo(g.gain, 0.37, 0.12, 0.28); chain(murmur, g, out);
-    const m2 = chain(loop(noiseBuffer('pink')), filter('bandpass', 310, 1.5), gain(1)); lfo(m2.gain, 0.21, 0.1, 0.18); m2.connect(out);
-    sprinkle(t => { // a cup set down somewhere
-      const f0 = 2200 + Math.random() * 2400; const v = ctx.createGain(); v.gain.setValueAtTime(0.0001, t);
-      v.gain.exponentialRampToValueAtTime(0.03 + Math.random() * 0.04, t + 0.005); v.gain.exponentialRampToValueAtTime(0.0001, t + 0.5);
-      const p = ctx.createStereoPanner(); p.pan.value = Math.random() * 1.4 - 0.7; v.connect(p); p.connect(out);
-      [1, 2.76, 5.4].forEach((m, i) => { const o = ctx.createOscillator(); o.frequency.value = f0 * m; const og = ctx.createGain(); og.gain.value = 1 / (i + 1.5); o.connect(og); og.connect(v); o.start(t); o.stop(t + 0.55); });
-    }, 2500, 9000);
-  },
-  ocean(out) {
-    const f = filter('lowpass', 900);
-    const g = gain(1);
-    chain(loop(noiseBuffer('pink', 8)), f, g, out);
-    lfo(g.gain, 0.085, 0.42, 0.5); lfo(f.frequency, 0.085, 500, 900);
-    chain(loop(noiseBuffer('brown')), filter('lowpass', 200), gain(0.4), out);
-  },
-};
+// Inkfold — ambient soundscapes: real recordings in /sounds, looped with a soft crossfade.
+// The service worker keeps each recording after its first play, so it works offline from then on.
+let ctx = null, session = null, volume = 0.5, onChange = () => {}, onError = () => {};
 
 export const SOUNDS = [
-  { id: 'rain', name: 'Rain', icon: 'rain' },
+  { id: 'beach', name: 'Beach', icon: 'sun' },
+  { id: 'cafe', name: 'Cafe', icon: 'cup' },
+  { id: 'crickets', name: 'Crickets', icon: 'moon' },
   { id: 'fireplace', name: 'Fireplace', icon: 'fire' },
-  { id: 'cafe', name: 'Café', icon: 'cup' },
-  { id: 'ocean', name: 'Ocean', icon: 'wave' },
+  { id: 'forest', name: 'Forest', icon: 'pine' },
+  { id: 'library', name: 'Library', icon: 'book' },
+  { id: 'rain', name: 'Rain', icon: 'rain' },
+  { id: 'river', name: 'River', icon: 'wave' },
+  { id: 'thunderstorm', name: 'Thunderstorm', icon: 'bolt' },
+  { id: 'village', name: 'Village', icon: 'home' },
 ];
 
-export function stop() {
-  timers.forEach(clearInterval); timers = [];
-  if (master && ctx) {
-    const m = master, n = nodes, t = ctx.currentTime;
-    m.gain.cancelScheduledValues(t); m.gain.setValueAtTime(m.gain.value, t); m.gain.linearRampToValueAtTime(0, t + 0.6);
-    setTimeout(() => { n.forEach(x => { try { x.stop && x.stop(); } catch {} try { x.disconnect(); } catch {} }); try { m.disconnect(); } catch {} }, 700);
-  }
-  nodes = []; master = null; current = null;
-}
+const XFADE = 3; // seconds of overlap where the recording ends and starts again
+const curve = up => Float32Array.from({ length: 48 }, (_, i) => Math.sin((up ? i : 47 - i) / 47 * Math.PI / 2)); // equal-power
 
 function audio(playback) {
   // iPhone/iPad mute Web Audio when the silent switch is on unless the page asks for playback
@@ -113,22 +26,76 @@ function audio(playback) {
   return ctx;
 }
 
+export const playing = () => session ? session.id : null;
+export const loading = () => !!(session && !session.ready);
+export const getVolume = () => volume;
+export function subscribe(fn, errFn) { onChange = fn || (() => {}); onError = errFn || (() => {}); }
+
+export function stop() {
+  const s = session; session = null;
+  if (!s) return;
+  clearInterval(s.timer);
+  const t = ctx.currentTime;
+  try { s.master.gain.cancelScheduledValues(t); s.master.gain.setValueAtTime(s.master.gain.value, t); s.master.gain.linearRampToValueAtTime(0, t + 0.6); } catch {}
+  setTimeout(() => {
+    s.els.forEach(el => { try { el.pause(); el.removeAttribute('src'); el.load(); } catch {} });
+    try { s.master.disconnect(); } catch {}
+  }, 700);
+  onChange();
+}
+
+// Must be called from a tap or click: phones only start sound from a gesture.
 export function play(id) {
+  const item = SOUNDS.find(x => x.id === id);
   stop();
-  if (!SCENES[id]) return;
+  if (!item) return;
   audio(true);
-  master = ctx.createGain(); master.gain.setValueAtTime(0, ctx.currentTime); master.connect(ctx.destination);
+  const master = ctx.createGain(); master.gain.setValueAtTime(0, ctx.currentTime); master.connect(ctx.destination);
   master.gain.linearRampToValueAtTime(volume * 0.9, ctx.currentTime + 1.5);
-  SCENES[id](master);
-  current = id;
+  const url = `sounds/${item.id}.mp3`;
+  const make = () => {
+    const el = new Audio(); el.preload = 'auto'; el.src = url;
+    const g = ctx.createGain(); g.gain.value = 0;
+    ctx.createMediaElementSource(el).connect(g); g.connect(master);
+    return { el, g };
+  };
+  const A = make(), B = make();
+  const s = session = { id, master, els: [A.el, B.el], ready: false, timer: 0 };
+  let cur = A, other = B, fading = false;
+  A.g.gain.value = 1;
+
+  const fail = () => { if (session !== s) return; stop(); onError(`Couldn’t load the ${item.name} sound. Check your connection and try again.`); };
+  A.el.addEventListener('error', fail);
+  B.el.addEventListener('error', () => { A.el.loop = true; clearInterval(s.timer); });
+  A.el.addEventListener('playing', () => { if (session === s && !s.ready) { s.ready = true; onChange(); } }, { once: true });
+
+  // Unlock the second player inside this same tap, so it can start later on its own (iOS needs this)
+  const p1 = A.el.play(); if (p1 && p1.catch) p1.catch(fail);
+  try { const p2 = B.el.play(); if (p2 && p2.catch) p2.catch(() => {}); B.el.pause(); } catch {}
+  onChange();
+
+  s.timer = setInterval(() => {
+    if (session !== s || fading) return;
+    const d = cur.el.duration;
+    if (!isFinite(d) || d < XFADE * 3) { if (isFinite(d)) { A.el.loop = true; clearInterval(s.timer); } return; }
+    if (d - cur.el.currentTime > XFADE + 0.2) return;
+    fading = true;
+    const from = cur, to = other, t = ctx.currentTime;
+    try { to.el.currentTime = 0; } catch {}
+    const go = to.el.play();
+    const swap = () => {
+      to.g.gain.cancelScheduledValues(t); to.g.gain.setValueCurveAtTime(curve(true), t, XFADE);
+      from.g.gain.cancelScheduledValues(t); from.g.gain.setValueCurveAtTime(curve(false), t, XFADE);
+      setTimeout(() => { if (session !== s) return; try { from.el.pause(); from.el.currentTime = 0; } catch {} cur = to; other = from; fading = false; }, XFADE * 1000 + 100);
+    };
+    if (go && go.then) go.then(swap, () => { fading = false; cur.el.loop = true; clearInterval(s.timer); }); else swap();
+  }, 200);
 }
 
 export function setVolume(v) {
   volume = v;
-  if (master && ctx) { master.gain.cancelScheduledValues(ctx.currentTime); master.gain.setTargetAtTime(v * 0.9, ctx.currentTime, 0.1); }
+  if (session && ctx) { const g = session.master.gain; g.cancelScheduledValues(ctx.currentTime); g.setTargetAtTime(v * 0.9, ctx.currentTime, 0.1); }
 }
-export const getVolume = () => volume;
-export const playing = () => current;
 
 // A soft two-note chime for timers
 export function chime() {
